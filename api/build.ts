@@ -1,8 +1,8 @@
 type FileChange = { path: string; content: string };
-type BuildResult = { summary: string; files: FileChange[] };
+type BuildResult = { summary: string; files: FileChange[]; sql?: string };
 const stage = (events: any[], name: string, message: string, done = false) => events.push({ stage: name, message, done });
-async function askModel(request: string): Promise<BuildResult> {
-  const response = await fetch('https://api.openai.com/v1/responses', { method: 'POST', headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: process.env.THEOPHANY_MODEL || 'gpt-5.6-mini', input: [{ role: 'system', content: 'You are Theophany, an autonomous software builder. Return ONLY valid JSON with keys summary and files. files is an array of {path,content}. Make a coherent minimal implementation for the user request. Never include secrets.' }, { role: 'user', content: request }], text: { format: { type: 'json_object' } } }) });
+async function askModel(request: string, needsSupabase: boolean): Promise<BuildResult> {
+  const response = await fetch('https://api.openai.com/v1/responses', { method: 'POST', headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: process.env.THEOPHANY_MODEL || 'gpt-5.6-mini', input: [{ role: 'system', content: `You are Theophany, an autonomous software builder. Return ONLY valid JSON with keys summary, files, and optional sql. files is an array of {path,content}. Make a coherent minimal implementation for the user request. Never include secrets. ${needsSupabase ? 'The request requires Supabase. Return sql containing only the necessary PostgreSQL DDL/RLS/storage metadata setup for the requested app. Enable RLS on every exposed public table and use ownership-aware policies. Do not create SECURITY DEFINER functions. Keep SQL idempotent where practical.' : 'Do not return sql.'}` }, { role: 'user', content: request }], text: { format: { type: 'json_object' } } }) });
   if (!response.ok) throw new Error(`OpenAI request failed (${response.status}).`);
   const data: any = await response.json();
   const output = data.output_text || data.output?.map((x: any) => x.content?.map((c: any) => c.text || '').join('')).join('');
@@ -28,6 +28,18 @@ async function commitFiles(files: FileChange[], message: string) {
   }
   return results;
 }
+async function provisionSupabase(sql: string) {
+  const token = process.env.SUPABASE_ACCESS_TOKEN;
+  const projectRef = process.env.SUPABASE_PROJECT_REF;
+  if (!token || !projectRef) throw new Error('Supabase provisioning requires SUPABASE_ACCESS_TOKEN and SUPABASE_PROJECT_REF.');
+  if (!sql.trim()) throw new Error('The AI requested Supabase but returned no SQL.');
+  const response = await fetch(`https://api.supabase.com/v1/projects/${encodeURIComponent(projectRef)}/database/query`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ query: sql }) });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(`Supabase provisioning failed (${response.status}): ${detail.slice(0, 500)}`);
+  }
+  return await response.json().catch(() => ({}));
+}
 async function findVercelDeployment(commitSha: string) {
   const token = process.env.VERCEL_TOKEN;
   const projectId = process.env.VERCEL_PROJECT_ID;
@@ -45,17 +57,24 @@ export default async function handler(req: any, res: any) {
   try {
     stage(events, 'Understand', 'Reading your request.', true);
     const lower = text.toLowerCase();
-    const needsSupabase = /\bsupabase\b/.test(lower);
+    const needsSupabase = /\bsupabase\b|database|authentication|auth|user accounts|storage|realtime|chat/.test(lower);
     const needsVercel = /\bvercel\b|deploy|publish|go live/.test(lower);
     stage(events, 'Plan', `Supabase: ${needsSupabase ? 'required' : 'not requested'} · Vercel: ${needsVercel ? 'required' : 'not requested'}`, true);
     const missing: string[] = [];
     if (!process.env.OPENAI_API_KEY) missing.push('OPENAI_API_KEY');
     if (!process.env.GITHUB_TOKEN) missing.push('GITHUB_TOKEN');
+    if (needsSupabase && !process.env.SUPABASE_ACCESS_TOKEN) missing.push('SUPABASE_ACCESS_TOKEN');
+    if (needsSupabase && !process.env.SUPABASE_PROJECT_REF) missing.push('SUPABASE_PROJECT_REF');
     if (missing.length) return res.status(200).json({ ok: false, message: `Connect/configure: ${missing.join(', ')}`, events, missing });
     stage(events, 'Build', 'The AI executor is generating the implementation.');
-    const result = await askModel(text);
+    const result = await askModel(text, needsSupabase);
     if (!Array.isArray(result.files) || !result.files.length) throw new Error('The AI executor produced no files.');
     stage(events, 'Build', `Generated ${result.files.length} file${result.files.length === 1 ? '' : 's'}.`, true);
+    if (needsSupabase) {
+      stage(events, 'Supabase', 'Applying the generated database configuration.');
+      await provisionSupabase(result.sql || '');
+      stage(events, 'Supabase', 'Database configuration applied successfully.', true);
+    }
     const committed = await commitFiles(result.files, `Theophany build: ${text.slice(0, 72)}`);
     stage(events, 'Test', 'Changes committed. Waiting for the connected Vercel Git deployment.');
     let deployment: any = null;
