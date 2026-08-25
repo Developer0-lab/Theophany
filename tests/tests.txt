@@ -1,0 +1,48 @@
+# Tests
+
+## Test 1 - Run the builder service self-test [sanity]
+Viewport: desktop
+Covers: /api/self-test OpenAI connectivity, GitHub connectivity, Supabase connectivity status, Vercel connectivity status, visible service results
+Description: Verifies the deployed runtime can check its configured service connections and render a stage-by-stage result.
+
+Steps:
+1. Open Theophany
+2. Select "Run builder test"
+3. Wait for the service results
+
+Expected: Theophany displays a result for OpenAI, GitHub, Supabase, and Vercel without exposing any secret values.
+
+## Test 2 - Submit a build request and show execution stages
+Viewport: desktop
+Covers: /api/build request handling, AI build planning, generated-file result rendering, build-stage status UI
+Description: Verifies a natural-language build request enters the autonomous builder flow and displays its execution stages or a precise configuration blocker.
+
+Steps:
+1. Enter "Build a simple landing page"
+2. Submit the request
+3. Review the execution panel
+
+Expected: Theophany displays Understand and Plan stages and then either completes the build or clearly identifies the missing server-side credential instead of silently failing.
+
+## Test 3 - Use voice input for a build request on mobile
+Viewport: mobile
+Covers: voice input, request transcription, mobile builder interaction
+Description: Verifies a supported mobile browser can capture a spoken build request and place the transcription into the builder composer.
+
+Steps:
+1. Tap the voice orb
+2. Say "Build a portfolio website"
+3. Stop speaking
+
+Expected: The recognized request appears in the composer and Theophany reports that it is ready to build.
+
+## Test 4 - Reject an empty build request
+Viewport: mobile
+Covers: empty-request validation, /api/build guardrail, user-visible error handling
+Description: Verifies Theophany blocks an empty build request before invoking the autonomous executor.
+
+Steps:
+1. Leave the composer empty
+2. Tap the build button
+
+Expected: Theophany tells the user to describe what to build and does not start a build session.
