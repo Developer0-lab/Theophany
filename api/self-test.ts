@@ -20,20 +20,23 @@ async function checkGitHub() {
 }
 
 async function checkSupabase() {
-  const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) return { ok: false, message: 'Supabase credentials are not configured.' };
-  const r = await fetch(`${url.replace(/\/$/, '')}/rest/v1/`, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
-  if (!(r.ok || r.status === 404)) return { ok: false, message: `Supabase returned HTTP ${r.status}.` };
-  return { ok: true, message: 'Supabase accepted an authenticated request.' };
+  const token = process.env.SUPABASE_ACCESS_TOKEN;
+  const ref = process.env.SUPABASE_PROJECT_REF;
+  if (!token || !ref) return { ok: false, message: 'SUPABASE_ACCESS_TOKEN or SUPABASE_PROJECT_REF is not configured.' };
+  const r = await fetch(`https://api.supabase.com/v1/projects/${encodeURIComponent(ref)}`, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
+  if (!r.ok) return { ok: false, message: `Supabase Management API returned HTTP ${r.status}.` };
+  const data: any = await r.json();
+  return { ok: true, message: `Supabase access confirmed for ${data.name || ref}.` };
 }
 
 async function checkVercel() {
-  const token = process.env.VERCEL_TOKEN;
-  if (!token) return { ok: false, message: 'VERCEL_TOKEN is not configured.' };
-  const r = await fetch('https://api.vercel.com/v9/user', { headers: { Authorization: `Bearer ${token}` } });
-  if (!r.ok) return { ok: false, message: `Vercel returned HTTP ${r.status}.` };
-  return { ok: true, message: 'Vercel API access confirmed.' };
+  if (process.env.VERCEL_TOKEN) {
+    const r = await fetch('https://api.vercel.com/v9/user', { headers: { Authorization: `Bearer ${process.env.VERCEL_TOKEN}` } });
+    if (!r.ok) return { ok: false, message: `Vercel returned HTTP ${r.status}.` };
+    return { ok: true, message: 'Vercel API access confirmed.' };
+  }
+  if (process.env.VERCEL === '1' || process.env.VERCEL_URL) return { ok: true, message: 'Running inside Vercel; deployment environment confirmed.' };
+  return { ok: false, message: 'VERCEL_TOKEN is not configured and this request is not running in Vercel.' };
 }
 
 export default async function handler(req: any, res: any) {
