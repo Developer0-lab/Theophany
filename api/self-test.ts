@@ -4,9 +4,10 @@ const json = (res: any, status: number, body: any) => res.status(status).json(bo
 
 async function checkOpenAI() {
   if (!process.env.OPENAI_API_KEY) return { ok: false, message: 'OPENAI_API_KEY is not configured.' };
-  const r = await fetch('https://api.openai.com/v1/responses', { method: 'POST', headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: process.env.THEOPHANY_MODEL || 'gpt-5.6-mini', input: 'Reply with exactly OK.', max_output_tokens: 5 }) });
-  if (!r.ok) return { ok: false, message: `OpenAI returned HTTP ${r.status}.` };
-  return { ok: true, message: 'OpenAI accepted a live test request.' };
+  const model = process.env.THEOPHANY_MODEL || 'gpt-5.4-mini';
+  const r = await fetch('https://api.openai.com/v1/responses', { method: 'POST', headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model, input: 'Reply with exactly OK.', max_output_tokens: 5 }) });
+  if (!r.ok) { const detail = await r.text().catch(() => ''); return { ok: false, message: `OpenAI returned HTTP ${r.status}${detail ? `: ${detail.slice(0, 180)}` : '.'}` }; }
+  return { ok: true, message: `OpenAI accepted a live test request using ${model}.` };
 }
 
 async function checkGitHub() {
