@@ -1,1 +1,1 @@
-import {StrictMode} from 'react';import {createRoot} from 'react-dom/client';import App from './App';import './index.css';import './canva-reference.css';createRoot(document.getElementById('root')!).render(<StrictMode><App/></StrictMode>);
+import{StrictMode}from'react';import{createRoot}from'react-dom/client';import App from'./App';import'./index.css';import'./canva-reference.css';import'./theophany-v2.css';createRoot(document.getElementById('root')!).render(<StrictMode><App/></StrictMode>);
