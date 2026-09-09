@@ -1,8 +1,10 @@
+import { getMemories, memoryContext, saveMemory } from './_theophany';
+
 type FileChange = { path: string; content: string };
 type BuildResult = { summary: string; files: FileChange[]; sql?: string };
 const stage = (events: any[], name: string, message: string, done = false) => events.push({ stage: name, message, done });
-async function askModel(request: string, needsSupabase: boolean): Promise<BuildResult> {
-  const response = await fetch('https://api.openai.com/v1/responses', { method: 'POST', headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: process.env.THEOPHANY_MODEL || 'gpt-5.6-mini', input: [{ role: 'system', content: `You are Theophany, an autonomous software builder. Return ONLY valid JSON with keys summary, files, and optional sql. files is an array of {path,content}. Make a coherent minimal implementation for the user request. Never include secrets. ${needsSupabase ? 'The request requires Supabase. Return sql containing only the necessary PostgreSQL DDL/RLS/storage metadata setup for the requested app. Enable RLS on every exposed public table and use ownership-aware policies. Do not create SECURITY DEFINER functions. Keep SQL idempotent where practical.' : 'Do not return sql.'}` }, { role: 'user', content: request }], text: { format: { type: 'json_object' } } }) });
+async function askModel(request: string, needsSupabase: boolean, memories: string): Promise<BuildResult> {
+  const response = await fetch('https://api.openai.com/v1/responses', { method: 'POST', headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: process.env.THEOPHANY_MODEL || 'gpt-5.4-mini', input: [{ role: 'system', content: `You are Theophany, an autonomous software builder. Return ONLY valid JSON with keys summary, files, and optional sql. files is an array of {path,content}. Make a coherent minimal implementation for the user request. Never include secrets. Use the memory below only when relevant; do not invent facts. SESSION MEMORY:\n${memories}\n${needsSupabase ? 'The request requires Supabase. Return sql containing only the necessary PostgreSQL DDL/RLS/storage metadata setup for the requested app. Enable RLS on every exposed public table and use ownership-aware policies. Do not create SECURITY DEFINER functions. Keep SQL idempotent where practical.' : 'Do not return sql.'}` }, { role: 'user', content: request }], text: { format: { type: 'json_object' } } }) });
   if (!response.ok) throw new Error(`OpenAI request failed (${response.status}).`);
   const data: any = await response.json();
   const output = data.output_text || data.output?.map((x: any) => x.content?.map((c: any) => c.text || '').join('')).join('');
@@ -34,10 +36,7 @@ async function provisionSupabase(sql: string) {
   if (!token || !projectRef) throw new Error('Supabase provisioning requires SUPABASE_ACCESS_TOKEN and SUPABASE_PROJECT_REF.');
   if (!sql.trim()) throw new Error('The AI requested Supabase but returned no SQL.');
   const response = await fetch(`https://api.supabase.com/v1/projects/${encodeURIComponent(projectRef)}/database/query`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ query: sql }) });
-  if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(`Supabase provisioning failed (${response.status}): ${detail.slice(0, 500)}`);
-  }
+  if (!response.ok) { const detail = await response.text(); throw new Error(`Supabase provisioning failed (${response.status}): ${detail.slice(0, 500)}`); }
   return await response.json().catch(() => ({}));
 }
 async function findVercelDeployment(commitSha: string) {
@@ -52,10 +51,13 @@ async function findVercelDeployment(commitSha: string) {
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') return res.status(405).json({ ok: false, message: 'Method not allowed' });
   const text = String(req.body?.text || '').trim();
+  const sessionId = String(req.body?.session_id || 'browser-session').trim().slice(0, 120);
   if (!text) return res.status(400).json({ ok: false, message: 'Tell Theophany what to build.' });
   const events: any[] = [];
   try {
     stage(events, 'Understand', 'Reading your request.', true);
+    const memories = await getMemories(sessionId, 12).catch(() => []);
+    if (memories.length) stage(events, 'Memory', `Loaded ${memories.length} relevant memories.`, true);
     const lower = text.toLowerCase();
     const needsSupabase = /\bsupabase\b|database|authentication|auth|user accounts|storage|realtime|chat/.test(lower);
     const needsVercel = /\bvercel\b|deploy|publish|go live/.test(lower);
@@ -67,14 +69,10 @@ export default async function handler(req: any, res: any) {
     if (needsSupabase && !process.env.SUPABASE_PROJECT_REF) missing.push('SUPABASE_PROJECT_REF');
     if (missing.length) return res.status(200).json({ ok: false, message: `Connect/configure: ${missing.join(', ')}`, events, missing });
     stage(events, 'Build', 'The AI executor is generating the implementation.');
-    const result = await askModel(text, needsSupabase);
+    const result = await askModel(text, needsSupabase, memoryContext(memories));
     if (!Array.isArray(result.files) || !result.files.length) throw new Error('The AI executor produced no files.');
     stage(events, 'Build', `Generated ${result.files.length} file${result.files.length === 1 ? '' : 's'}.`, true);
-    if (needsSupabase) {
-      stage(events, 'Supabase', 'Applying the generated database configuration.');
-      await provisionSupabase(result.sql || '');
-      stage(events, 'Supabase', 'Database configuration applied successfully.', true);
-    }
+    if (needsSupabase) { stage(events, 'Supabase', 'Applying the generated database configuration.'); await provisionSupabase(result.sql || ''); stage(events, 'Supabase', 'Database configuration applied successfully.', true); }
     const committed = await commitFiles(result.files, `Theophany build: ${text.slice(0, 72)}`);
     stage(events, 'Test', 'Changes committed. Waiting for the connected Vercel Git deployment.');
     let deployment: any = null;
@@ -85,10 +83,10 @@ export default async function handler(req: any, res: any) {
       if (deployment) stage(events, 'Deploy', `Vercel deployment ${deployment.id} is ${deployment.readyState || deployment.state}.`, deployment.readyState === 'READY' || deployment.state === 'READY');
       else stage(events, 'Deploy', 'GitHub accepted the build. Vercel deployment is queued or still propagating.', false);
     } else stage(events, 'Deploy', 'Vercel verification is not configured; Git integration will deploy the commit.', true);
+    await saveMemory(sessionId, `User request: ${text}`, 'request', 6).catch(() => {});
+    await saveMemory(sessionId, `Build result: ${result.summary || 'Build completed.'}`, 'build_result', 7, { files: committed }).catch(() => {});
+    stage(events, 'Memory', 'Saved the important build context for next time.', true);
     stage(events, 'Complete', `Built and committed ${committed.length} file${committed.length === 1 ? '' : 's'}.`, true);
     return res.status(200).json({ ok: true, message: result.summary || 'Build completed.', events, files: committed, deployment: deployment ? { id: deployment.id, state: deployment.readyState || deployment.state, url: deployment.url } : null });
-  } catch (error: any) {
-    stage(events, 'Repair', error?.message || 'Build failed.');
-    return res.status(500).json({ ok: false, message: error?.message || 'Build failed.', events });
-  }
+  } catch (error: any) { stage(events, 'Repair', error?.message || 'Build failed.'); return res.status(500).json({ ok: false, message: error?.message || 'Build failed.', events }); }
 }
