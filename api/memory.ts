@@ -1,4 +1,4 @@
-import { getMemories, saveMemory } from './_theophany';
+import { getMemories, saveMemory } from '../lib/theophany';
 
 export default async function handler(req: any, res: any) {
   if (!['GET', 'POST'].includes(req.method)) return res.status(405).json({ ok: false, message: 'Method not allowed' });
