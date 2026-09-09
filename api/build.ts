@@ -1,4 +1,4 @@
-import { getMemories, memoryContext, saveMemory } from './_theophany';
+import { getMemories, memoryContext, saveMemory } from '../lib/theophany';
 
 type FileChange = { path: string; content: string };
 type BuildResult = { summary: string; files: FileChange[]; sql?: string };
