@@ -1,22 +1,19 @@
-import { sqlText, supabaseQuery } from './_theophany';
+import { sqlText, supabaseQuery } from '../lib/theophany';
 
 const stepNames = ['Understand', 'Plan', 'Build', 'Test', 'Deploy', 'Complete'];
-
 async function createJob(sessionId: string, goal: string) {
-  const rows: any[] = await supabaseQuery(`insert into public.theophany_automation_jobs(session_id,goal,status) values (${sqlText(sessionId)},${sqlText(goal)},'queued') returning id,session_id,goal,status,attempts,max_attempts,created_at;`);
-  const job = rows[0];
+  const rows: any = await supabaseQuery(`insert into public.theophany_automation_jobs(session_id,goal,status) values (${sqlText(sessionId)},${sqlText(goal)},'queued') returning id,session_id,goal,status,attempts,max_attempts,created_at;`);
+  const job = Array.isArray(rows) ? rows[0] : rows?.result?.[0];
+  if (!job?.id) throw new Error('Could not create automation job.');
   for (let i = 0; i < stepNames.length; i++) await supabaseQuery(`insert into public.theophany_automation_steps(job_id,step_order,name) values (${sqlText(job.id)},${i + 1},${sqlText(stepNames[i])});`);
   return job;
 }
-
 async function updateJob(jobId: string, status: string, extra = '') {
   await supabaseQuery(`update public.theophany_automation_jobs set status=${sqlText(status)}, attempts=attempts+1, ${status === 'running' ? 'started_at=now(),' : ''}${status === 'completed' || status === 'failed' ? 'completed_at=now(),' : ''}error_message=${extra ? sqlText(extra) : 'null'}, updated_at=now() where id=${sqlText(jobId)};`);
 }
-
 async function updateStep(jobId: string, order: number, status: string, message = '') {
   await supabaseQuery(`update public.theophany_automation_steps set status=${sqlText(status)}, message=${message ? sqlText(message) : 'null'}, ${status === 'running' ? 'started_at=now(),' : ''}${status === 'completed' || status === 'failed' ? 'completed_at=now(),' : ''} name=name where job_id=${sqlText(jobId)} and step_order=${order};`);
 }
-
 async function runJob(jobId: string, sessionId: string, goal: string, origin: string) {
   await updateJob(jobId, 'running');
   try {
@@ -27,7 +24,7 @@ async function runJob(jobId: string, sessionId: string, goal: string, origin: st
     if (!response.ok || !data.ok) throw new Error(data.message || 'The build step failed.');
     await updateStep(jobId, 3, 'completed', 'Implementation generated and committed.');
     await updateStep(jobId, 4, 'completed', 'Build pipeline completed its verification step.');
-    await updateStep(jobId, 5, data.deployment ? 'completed' : 'completed', data.deployment ? 'Vercel deployment detected.' : 'Git integration will handle deployment.');
+    await updateStep(jobId, 5, 'completed', data.deployment ? 'Vercel deployment detected.' : 'Git integration will handle deployment.');
     await updateStep(jobId, 6, 'completed', 'Automation completed.');
     await supabaseQuery(`update public.theophany_automation_jobs set status='completed', result='${JSON.stringify({ message: data.message, files: data.files, deployment: data.deployment }).replace(/'/g, "''")}'::jsonb, completed_at=now(), updated_at=now() where id=${sqlText(jobId)};`);
     return data;
@@ -39,15 +36,14 @@ async function runJob(jobId: string, sessionId: string, goal: string, origin: st
     throw error;
   }
 }
-
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST' && req.method !== 'GET') return res.status(405).json({ ok: false, message: 'Method not allowed' });
   try {
     if (req.method === 'GET') {
       const sessionId = String(req.query?.session_id || '').trim();
       if (!sessionId) return res.status(400).json({ ok: false, message: 'session_id is required.' });
-      const jobs = await supabaseQuery<any[]>(`select id,session_id,goal,status,attempts,max_attempts,result,error_message,created_at,started_at,completed_at,updated_at from public.theophany_automation_jobs where session_id=${sqlText(sessionId)} order by created_at desc limit 20;`);
-      return res.status(200).json({ ok: true, jobs });
+      const jobs: any = await supabaseQuery(`select id,session_id,goal,status,attempts,max_attempts,result,error_message,created_at,started_at,completed_at,updated_at from public.theophany_automation_jobs where session_id=${sqlText(sessionId)} order by created_at desc limit 20;`);
+      return res.status(200).json({ ok: true, jobs: Array.isArray(jobs) ? jobs : [] });
     }
     const sessionId = String(req.body?.session_id || '').trim();
     const goal = String(req.body?.goal || '').trim();
@@ -56,7 +52,5 @@ export default async function handler(req: any, res: any) {
     const origin = `${req.headers?.['x-forwarded-proto'] || 'https'}://${req.headers?.host || 'theophany.vercel.app'}`;
     const data = await runJob(job.id, sessionId, goal, origin);
     return res.status(200).json({ ok: true, job_id: job.id, ...data });
-  } catch (error: any) {
-    return res.status(500).json({ ok: false, message: error?.message || 'Automation failed.' });
-  }
+  } catch (error: any) { return res.status(500).json({ ok: false, message: error?.message || 'Automation failed.' }); }
 }
