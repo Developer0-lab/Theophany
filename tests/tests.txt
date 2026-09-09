@@ -1,48 +1,65 @@
 # Tests
 
-## Test 1 - Run the builder service self-test [sanity]
-Viewport: desktop
-Covers: /api/self-test OpenAI connectivity, GitHub connectivity, Supabase connectivity status, Vercel connectivity status, visible service results
-Description: Verifies the deployed runtime can check its configured service connections and render a stage-by-stage result.
+## Test 1 - Enter Theophany and choose a build mode [sanity]
+Viewport: mobile
+Covers: Home screen, main mode selection, Home-to-Voice navigation, Home-to-Agent navigation
+Description: Verifies the new Canva-inspired entry experience leads into the two immersive builder modes.
 
 Steps:
 1. Open Theophany
-2. Select "Run builder test"
-3. Wait for the service results
+2. Tap "Enter Theophany"
+3. Tap the Voice Mode option
+4. Use Back and tap the Agent Mode option
 
-Expected: Theophany displays a result for OpenAI, GitHub, Supabase, and Vercel without exposing any secret values.
+Expected: Theophany opens on the premium Home screen, reaches the mode-selection screen, and opens both Voice Mode and Agent Mode without errors.
 
-## Test 2 - Submit a build request and show execution stages
-Viewport: desktop
-Covers: /api/build request handling, AI build planning, generated-file result rendering, build-stage status UI
-Description: Verifies a natural-language build request enters the autonomous builder flow and displays its execution stages or a precise configuration blocker.
-
-Steps:
-1. Enter "Build a simple landing page"
-2. Submit the request
-3. Review the execution panel
-
-Expected: Theophany displays Understand and Plan stages and then either completes the build or clearly identifies the missing server-side credential instead of silently failing.
-
-## Test 3 - Use voice input for a build request on mobile
+## Test 2 - Use the Voice Mode presence for a build request
 Viewport: mobile
-Covers: voice input, request transcription, mobile builder interaction
-Description: Verifies a supported mobile browser can capture a spoken build request and place the transcription into the builder composer.
+Covers: Voice Mode immersive human-like presence, voice input, /api/build request handling, build-stage status UI
+Description: Verifies Voice Mode presents the new human-like AI interface and can accept a natural-language build request.
 
 Steps:
-1. Tap the voice orb
-2. Say "Build a portfolio website"
-3. Stop speaking
+1. Open Voice Mode
+2. Tap the microphone control
+3. Say "Build a portfolio website"
+4. Submit the transcribed request
 
-Expected: The recognized request appears in the composer and Theophany reports that it is ready to build.
+Expected: The human-like Theophany presence remains visible, the request appears in the composer, and the build result or a precise server-side configuration blocker is displayed.
 
-## Test 4 - Reject an empty build request
+## Test 3 - Use Agent Mode for an automated goal
+Viewport: desktop
+Covers: Agent Mode orb, deep-voice interaction, /api/automation request handling, automation execution stages
+Description: Verifies Agent Mode uses the large intelligent orb and exposes the automated build workflow.
+
+Steps:
+1. Open Agent Mode
+2. Enter "Build a simple landing page"
+3. Tap "Run automatically"
+4. Review the execution stages
+
+Expected: The Agent Mode orb and automated workflow remain visible, and Theophany reports completion or a precise configuration blocker rather than silently failing.
+
+## Test 4 - Run the builder service self-test from the mode interface
+Viewport: desktop
+Covers: /api/self-test OpenAI connectivity, GitHub connectivity, Supabase connectivity status, Vercel connectivity status, visible service results
+Description: Verifies the redesigned frontend still exposes the builder self-test and renders service results without exposing secrets.
+
+Steps:
+1. Open Theophany
+2. Enter Theophany
+3. Select "Run builder test"
+4. Wait for the service results
+
+Expected: Theophany displays service results for OpenAI, GitHub, Supabase, and Vercel without exposing any secret values.
+
+## Test 5 - Reject an empty build request
 Viewport: mobile
 Covers: empty-request validation, /api/build guardrail, user-visible error handling
-Description: Verifies Theophany blocks an empty build request before invoking the autonomous executor.
+Description: Verifies the redesigned composer blocks an empty build request before invoking the autonomous executor.
 
 Steps:
-1. Leave the composer empty
-2. Tap the build button
+1. Open Voice Mode
+2. Leave the composer empty
+3. Tap the build arrow
 
 Expected: Theophany tells the user to describe what to build and does not start a build session.
