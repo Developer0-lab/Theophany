@@ -13,8 +13,8 @@ async function ensureIntegrationTables() {
 }
 
 function keyBytes() {
-  const value = process.env.THEOPHANY_TOKEN_ENCRYPTION_KEY;
-  if (!value) throw new Error('THEOPHANY_TOKEN_ENCRYPTION_KEY is not configured.');
+  const value = process.env.THEOPHANY_TOKEN_ENCRYPTION_KEY || process.env.SUPABASE_ACCESS_TOKEN;
+  if (!value) throw new Error('A server-side token encryption secret is not configured.');
   return createHash('sha256').update(value).digest();
 }
 
