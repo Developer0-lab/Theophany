@@ -9,7 +9,7 @@ type Status = { provider: string; status: string; scopes?: string[] };
 export function IntegrationPanel({ sessionId }: Props) {
   const [statuses, setStatuses] = useState<Status[]>([]);
   const [loading, setLoading] = useState(false);
-  const load = async () => { if (!sessionId) return; setLoading(true); try { const r = await fetch(`/api/integrations/status?session_id=${encodeURIComponent(sessionId)}`); const d = await r.json(); if (d.ok) setStatuses(d.integrations || []); } finally { setLoading(false); } };
+  const load = async () => { if (!sessionId) return; setLoading(true); try { const r = await fetch(`/api/integrations?session_id=${encodeURIComponent(sessionId)}`); const d = await r.json(); if (d.ok) setStatuses(d.integrations || []); } finally { setLoading(false); } };
   useEffect(() => { load(); }, [sessionId]);
   const connected = new Map(statuses.map(s => [s.provider, s]));
   const connect = (id: string) => { if (id === 'gmail') window.location.href = `/api/integrations/gmail/connect?session_id=${encodeURIComponent(sessionId)}`; };
