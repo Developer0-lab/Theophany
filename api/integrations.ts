@@ -1,6 +1,6 @@
 export const config = { runtime: 'nodejs' };
 
-const sqlText = (value: string) => '${String(value).replace(/'/g, "''")}}';
+const sqlText = (value: string) => "'" + String(value).split("'").join("''") + "'";
 
 async function query(sql: string) {
   const token = process.env.SUPABASE_ACCESS_TOKEN;
