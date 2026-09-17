@@ -1,4 +1,3 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import { sqlText, supabaseQuery } from '../theophany';
 
 let tablesReady = false;
@@ -12,31 +11,48 @@ async function ensureIntegrationTables() {
   tablesReady = true;
 }
 
-function keyBytes() {
+function secretValue() {
   const value = process.env.THEOPHANY_TOKEN_ENCRYPTION_KEY || process.env.SUPABASE_ACCESS_TOKEN;
   if (!value) throw new Error('A server-side token encryption secret is not configured.');
-  return createHash('sha256').update(value).digest();
+  return value;
 }
 
-function encryptToken(value: string) {
-  const iv = randomBytes(12);
-  const cipher = createCipheriv('aes-256-gcm', keyBytes(), iv);
-  const data = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()]);
-  const tag = cipher.getAuthTag();
-  return `v1:${iv.toString('base64url')}:${tag.toString('base64url')}:${data.toString('base64url')}`;
+function randomHex(bytes: number) {
+  const data = new Uint8Array(bytes);
+  globalThis.crypto.getRandomValues(data);
+  return Array.from(data, b => b.toString(16).padStart(2, '0')).join('');
 }
 
-function decryptToken(value: string) {
-  const [version, ivText, tagText, dataText] = String(value).split(':');
-  if (version !== 'v1' || !ivText || !tagText || !dataText) throw new Error('Invalid encrypted token.');
-  const decipher = createDecipheriv('aes-256-gcm', keyBytes(), Buffer.from(ivText, 'base64url'));
-  decipher.setAuthTag(Buffer.from(tagText, 'base64url'));
-  return Buffer.concat([decipher.update(Buffer.from(dataText, 'base64url')), decipher.final()]).toString('utf8');
+function toBase64Url(data: Uint8Array) {
+  return Buffer.from(data).toString('base64url');
+}
+
+function fromBase64Url(value: string) {
+  return new Uint8Array(Buffer.from(value, 'base64url'));
+}
+
+async function cryptoKey() {
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(secretValue()));
+  return globalThis.crypto.subtle.importKey('raw', digest, 'AES-GCM', false, ['encrypt', 'decrypt']);
+}
+
+async function encryptToken(value: string) {
+  const iv = new Uint8Array(12);
+  globalThis.crypto.getRandomValues(iv);
+  const encrypted = new Uint8Array(await globalThis.crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await cryptoKey(), new TextEncoder().encode(value)));
+  return `v1:${toBase64Url(iv)}:${toBase64Url(encrypted)}`;
+}
+
+async function decryptToken(value: string) {
+  const [version, ivText, dataText] = String(value).split(':');
+  if (version !== 'v1' || !ivText || !dataText) throw new Error('Invalid encrypted token.');
+  const decrypted = await globalThis.crypto.subtle.decrypt({ name: 'AES-GCM', iv: fromBase64Url(ivText) }, await cryptoKey(), fromBase64Url(dataText));
+  return new TextDecoder().decode(decrypted);
 }
 
 export async function saveOAuthState(sessionId: string, provider: string) {
   await ensureIntegrationTables();
-  const state = randomBytes(32).toString('hex');
+  const state = randomHex(32);
   await supabaseQuery(`insert into public.theophany_oauth_states(state,session_id,provider,expires_at) values (${sqlText(state)},${sqlText(sessionId)},${sqlText(provider)},now()+interval '10 minutes');`);
   return state;
 }
@@ -51,9 +67,9 @@ export async function consumeOAuthState(state: string, provider: string) {
 
 export async function saveIntegration(sessionId: string, provider: string, tokens: { accessToken: string; refreshToken?: string; expiresAt?: string; scopes?: string[]; metadata?: any }) {
   await ensureIntegrationTables();
-  const id = randomBytes(16).toString('hex');
-  const access = encryptToken(tokens.accessToken);
-  const refresh = tokens.refreshToken ? encryptToken(tokens.refreshToken) : null;
+  const id = randomHex(16);
+  const access = await encryptToken(tokens.accessToken);
+  const refresh = tokens.refreshToken ? await encryptToken(tokens.refreshToken) : null;
   const expires = tokens.expiresAt ? sqlText(tokens.expiresAt) : 'null';
   const scopes = sqlText(`{${(tokens.scopes || []).map(s => s.replace(/[{}",\\]/g, '')).join(',')}}`);
   const metadata = sqlText(JSON.stringify(tokens.metadata || {}));
