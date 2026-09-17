@@ -4,15 +4,13 @@ let tablesReady = false;
 
 async function ensureIntegrationTables() {
   if (tablesReady) return;
-  await supabaseQuery(`create table if not exists public.theophany_integrations (id text primary key, session_id text not null, provider text not null, status text not null default 'connected', access_token text, refresh_token text, expires_at timestamptz, scopes text[] not null default '{}', metadata jsonb not null default '{}'::jsonb, created_at timestamptz not null default now(), updated_at timestamptz not null default now(), unique(session_id, provider));`);
-  await supabaseQuery(`create table if not exists public.theophany_oauth_states (state text primary key, session_id text not null, provider text not null, expires_at timestamptz not null);`);
-  await supabaseQuery(`alter table public.theophany_integrations enable row level security;`);
-  await supabaseQuery(`alter table public.theophany_oauth_states enable row level security;`);
+  const rows = await supabaseQuery<any>(`select to_regclass('public.theophany_integrations') as integrations_table, to_regclass('public.theophany_oauth_states') as oauth_states_table;`);
+  if (!Array.isArray(rows) || !rows[0]?.integrations_table || !rows[0]?.oauth_states_table) throw new Error('Integration storage tables are not ready.');
   tablesReady = true;
 }
 
 function secretValue() {
-  const value = process.env.THEOPHANY_TOKEN_ENCRYPTION_KEY || process.env.SUPABASE_ACCESS_TOKEN;
+  const value = process.env.THEOPHANY_TOKEN_ENCRYPTION_KEY;
   if (!value) throw new Error('A server-side token encryption secret is not configured.');
   return value;
 }
@@ -29,7 +27,7 @@ function randomUuid() {
   data[6] = (data[6] & 0x0f) | 0x40;
   data[8] = (data[8] & 0x3f) | 0x80;
   const h = Array.from(data, b => b.toString(16).padStart(2, '0')).join('');
-  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+  return \`${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}\`;
 }
 
 function toBase64Url(data: Uint8Array) {
@@ -49,7 +47,7 @@ async function encryptToken(value: string) {
   const iv = new Uint8Array(12);
   globalThis.crypto.getRandomValues(iv);
   const encrypted = new Uint8Array(await globalThis.crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await cryptoKey(), new TextEncoder().encode(value)));
-  return `v1:${toBase64Url(iv)}:${toBase64Url(encrypted)}`;
+  return \`v1:${toBase64Url(iv)}:${toBase64Url(encrypted)}\`;
 }
 
 async function decryptToken(value: string) {
@@ -80,7 +78,7 @@ export async function saveIntegration(sessionId: string, provider: string, token
   const access = await encryptToken(tokens.accessToken);
   const refresh = tokens.refreshToken ? await encryptToken(tokens.refreshToken) : null;
   const expires = tokens.expiresAt ? sqlText(tokens.expiresAt) : 'null';
-  const scopes = sqlText(`{${(tokens.scopes || []).map(s => s.replace(/[{}",\\]/g, '')).join(',')}}`);
+  const scopes = sqlText(`{${(tokens.scopes || []).map(s => s.replace(/[{}",\\\\]/g, '')).join(',')}}`);
   const metadata = sqlText(JSON.stringify(tokens.metadata || {}));
   await supabaseQuery(`insert into public.theophany_integrations(id,session_id,provider,status,access_token,refresh_token,expires_at,scopes,metadata) values (${sqlText(id)},${sqlText(sessionId)},${sqlText(provider)},'connected',${sqlText(access)},${refresh ? sqlText(refresh) : 'null'},${expires},${scopes}::text[],${metadata}::jsonb) on conflict(session_id,provider) do update set status='connected',access_token=excluded.access_token,refresh_token=excluded.refresh_token,expires_at=excluded.expires_at,scopes=excluded.scopes,metadata=excluded.metadata,updated_at=now();`);
 }
