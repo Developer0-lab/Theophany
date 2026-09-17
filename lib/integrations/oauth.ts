@@ -23,6 +23,15 @@ function randomHex(bytes: number) {
   return Array.from(data, b => b.toString(16).padStart(2, '0')).join('');
 }
 
+function randomUuid() {
+  const data = new Uint8Array(16);
+  globalThis.crypto.getRandomValues(data);
+  data[6] = (data[6] & 0x0f) | 0x40;
+  data[8] = (data[8] & 0x3f) | 0x80;
+  const h = Array.from(data, b => b.toString(16).padStart(2, '0')).join('');
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+
 function toBase64Url(data: Uint8Array) {
   return Buffer.from(data).toString('base64url');
 }
@@ -67,7 +76,7 @@ export async function consumeOAuthState(state: string, provider: string) {
 
 export async function saveIntegration(sessionId: string, provider: string, tokens: { accessToken: string; refreshToken?: string; expiresAt?: string; scopes?: string[]; metadata?: any }) {
   await ensureIntegrationTables();
-  const id = randomHex(16);
+  const id = randomUuid();
   const access = await encryptToken(tokens.accessToken);
   const refresh = tokens.refreshToken ? await encryptToken(tokens.refreshToken) : null;
   const expires = tokens.expiresAt ? sqlText(tokens.expiresAt) : 'null';
