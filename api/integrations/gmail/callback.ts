@@ -1,3 +1,5 @@
+export const config = { runtime: 'nodejs' };
+
 import { consumeOAuthState, saveIntegration } from '../../../lib/integrations/oauth';
 
 export default async function handler(req: any, res: any) {
