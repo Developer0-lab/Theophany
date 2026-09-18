@@ -59,15 +59,15 @@ async function googleFetch(sessionId: string, provider: string, url: string, ini
   });
   let response = await call(access);
   if (response.status === 401) {
-    const refresh = await getIntegrationToken(sessionId, provider, 'refresh');
-    if (refresh) {
+    const refreshToken = await getIntegrationToken(sessionId, provider, 'refresh');
+    if (refreshToken) {
       const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
           client_id: process.env.GOOGLE_CLIENT_ID || '',
           client_secret: process.env.GOOGLE_CLIENT_SECRET || '',
-          refresh_token: refresh,
+          refresh_token: refreshToken,
           grant_type: 'refresh_token',
         }),
       });
