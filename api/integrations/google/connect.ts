@@ -30,8 +30,7 @@ export default async function handler(req: any, res: any) {
     const crypto: any = await import('crypto');
     const state = crypto.randomBytes(32).toString('hex');
     await query('insert into public.theophany_oauth_states(state,session_id,provider,expires_at) values (' + sqlText(state) + ',' + sqlText(sessionId) + ',' + sqlText(provider) + ",now()+interval '10 minutes');");
-    const origin = (req.headers?.['x-forwarded-proto'] || 'https') + '://' + (req.headers?.host || 'theophany.vercel.app');
-    const redirectUri = origin + '/api/integrations/google/callback';
+    const redirectUri = 'https://theophany.vercel.app/api/integrations/google/callback';
     const params = new URLSearchParams({ client_id: clientId, redirect_uri: redirectUri, response_type: 'code', access_type: 'offline', prompt: 'consent', scope: scopes[provider], state });
     return res.redirect('https://accounts.google.com/o/oauth2/v2/auth?' + params.toString());
   } catch (error: any) {
