@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'crypto';
+import crypto from 'crypto';
 import { sqlText, supabaseQuery } from '../theophany';
 
 let tablesReady = false;
@@ -16,14 +16,14 @@ function secretValue() {
   return value;
 }
 
-function key() { return createHash('sha256').update(secretValue(), 'utf8').digest(); }
+function key() { return crypto.createHash('sha256').update(secretValue(), 'utf8').digest(); }
 function toBase64Url(data: Buffer) { return data.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, ''); }
 function fromBase64Url(value: string) { const padded = String(value).replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - String(value).length % 4) % 4); return Buffer.from(padded, 'base64'); }
-function makeUuid() { const h = randomBytes(16).toString('hex'); return h.slice(0,8) + '-' + h.slice(8,12) + '-4' + h.slice(13,16) + '-' + ((parseInt(h.slice(16,18),16) & 3) | 8).toString(16) + h.slice(18,20) + '-' + h.slice(20); }
+function makeUuid() { const h = crypto.randomBytes(16).toString('hex'); return h.slice(0,8) + '-' + h.slice(8,12) + '-4' + h.slice(13,16) + '-' + ((parseInt(h.slice(16,18),16) & 3) | 8).toString(16) + h.slice(18,20) + '-' + h.slice(20); }
 
 function encryptToken(value: string) {
-  const iv = randomBytes(12);
-  const cipher = createCipheriv('aes-256-gcm', key(), iv);
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key(), iv);
   const ciphertext = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()]);
   return 'v2:' + toBase64Url(iv) + ':' + toBase64Url(cipher.getAuthTag()) + ':' + toBase64Url(ciphertext);
 }
@@ -31,14 +31,14 @@ function encryptToken(value: string) {
 function decryptToken(value: string) {
   const parts = String(value).split(':');
   if (parts[0] !== 'v2' || !parts[1] || !parts[2] || !parts[3]) throw new Error('Invalid encrypted token.');
-  const decipher = createDecipheriv('aes-256-gcm', key(), fromBase64Url(parts[1]));
+  const decipher = crypto.createDecipheriv('aes-256-gcm', key(), fromBase64Url(parts[1]));
   decipher.setAuthTag(fromBase64Url(parts[2]));
   return Buffer.concat([decipher.update(fromBase64Url(parts[3])), decipher.final()]).toString('utf8');
 }
 
 export async function saveOAuthState(sessionId: string, provider: string) {
   await ensureIntegrationTables();
-  const state = randomBytes(32).toString('hex');
+  const state = crypto.randomBytes(32).toString('hex');
   await supabaseQuery('insert into public.theophany_oauth_states(state,session_id,provider,expires_at) values (' + sqlText(state) + ',' + sqlText(sessionId) + ',' + sqlText(provider) + ",now()+interval '10 minutes');");
   return state;
 }
