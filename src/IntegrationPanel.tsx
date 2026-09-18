@@ -12,9 +12,13 @@ export function IntegrationPanel({ sessionId }: Props) {
   const load = async () => { if (!sessionId) return; setLoading(true); try { const r = await fetch(`/api/integrations?session_id=${encodeURIComponent(sessionId)}`); const d = await r.json(); if (d.ok) setStatuses(d.integrations || []); } finally { setLoading(false); } };
   useEffect(() => { load(); }, [sessionId]);
   const connected = new Map(statuses.map(s => [s.provider, s]));
-  const connect = (id: string) => { if (id === 'gmail') window.location.href = `/api/integrations/gmail/connect?session_id=${encodeURIComponent(sessionId)}`; };
+  const connect = (id: string) => {
+    if (id === 'gmail') window.location.href = `/api/integrations/gmail/connect?session_id=${encodeURIComponent(sessionId)}`;
+    if (id === 'google-drive' || id === 'google-calendar') window.location.href = `/api/integrations/google/connect?provider=${encodeURIComponent(id)}&session_id=${encodeURIComponent(sessionId)}`;
+  };
+  const active = (id: string) => id === 'gmail' || id === 'google-drive' || id === 'google-calendar';
   return <section className='th-settings-section th-integrations'>
     <div className='th-integrations-title'><div><h4>Plugins & integrations</h4><small>Connect services Theophany can work with. Credentials stay server-side.</small></div>{loading && <LoaderCircle className='th-spin' size={16}/>}</div>
-    <div className='th-integration-list'>{integrations.map(item => { const state = connected.get(item.id); const isConnected = state?.status === 'connected'; const active = item.id === 'gmail'; return <div className='th-integration-row' key={item.id}><span className='th-integration-icon'><PlugZap size={17}/></span><span className='th-integration-info'><b>{item.name}</b><small>{item.description}</small></span>{isConnected ? <span className='th-integration-status'><Check size={14}/> Connected</span> : active ? <button className='th-integration-connect' onClick={() => connect(item.id)}><ExternalLink size={14}/> Connect</button> : <span className='th-integration-status muted'>Setup needed</span>}</div>; })}</div>
+    <div className='th-integration-list'>{integrations.map(item => { const state = connected.get(item.id); const isConnected = state?.status === 'connected'; return <div className='th-integration-row' key={item.id}><span className='th-integration-icon'><PlugZap size={17}/></span><span className='th-integration-info'><b>{item.name}</b><small>{item.description}</small></span>{isConnected ? <span className='th-integration-status'><Check size={14}/> Connected</span> : active(item.id) ? <button className='th-integration-connect' onClick={() => connect(item.id)}><ExternalLink size={14}/> Connect</button> : <span className='th-integration-status muted'>Setup needed</span>}</div>; })}</div>
   </section>;
 }
