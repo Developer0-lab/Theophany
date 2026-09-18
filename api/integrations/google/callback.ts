@@ -1,6 +1,6 @@
 import { consumeOAuthStateAny, saveIntegration } from '../../../lib/integrations/oauth';
 
-export const config = { runtime: 'nodejs22.x' };
+export const config = { runtime: 'nodejs' };
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'GET') return res.status(405).json({ ok: false, message: 'Method not allowed' });
