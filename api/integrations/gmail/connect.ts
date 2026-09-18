@@ -33,8 +33,7 @@ export default async function handler(req: any, res: any) {
     if (!clientId) return res.status(503).json({ ok: false, message: 'Gmail is not configured yet. Add GOOGLE_CLIENT_ID.' });
     const state = randomHex(32);
     await query('insert into public.theophany_oauth_states(state,session_id,provider,expires_at) values (' + sqlText(state) + ',' + sqlText(sessionId) + ',' + sqlText('gmail') + ",now()+interval '10 minutes');");
-    const origin = (req.headers?.['x-forwarded-proto'] || 'https') + '://' + (req.headers?.host || 'theophany.vercel.app');
-    const redirectUri = origin + '/api/integrations/gmail/callback';
+    const redirectUri = 'https://theophany.vercel.app/api/integrations/gmail/callback';
     const params = new URLSearchParams({
       client_id: clientId,
       redirect_uri: redirectUri,
