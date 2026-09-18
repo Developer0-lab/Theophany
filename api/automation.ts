@@ -19,7 +19,7 @@ async function runJob(jobId: string, sessionId: string, goal: string, origin: st
   try {
     for (let i = 0; i < 2; i++) await updateStep(jobId, i + 1, 'completed', i === 0 ? 'Request accepted.' : 'Build plan prepared.');
     await updateStep(jobId, 3, 'running', 'Sending the goal to Theophany builder.');
-    const response = await fetch(`${origin}/api/build`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: goal, session_id: sessionId, automation_job_id: jobId }) });
+    const response = await fetch(`${origin}/api/build`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: goal, session_id: sessionId, automation_job_id: jobId, mode: 'agent' }) });
     const data = await response.json();
     if (!response.ok || !data.ok) throw new Error(data.message || 'The build step failed.');
     await updateStep(jobId, 3, 'completed', 'Implementation generated and committed.');
