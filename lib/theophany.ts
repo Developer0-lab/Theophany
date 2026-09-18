@@ -4,9 +4,10 @@ export async function supabaseQuery<T = any>(query: string): Promise<T> {
   const token = process.env.SUPABASE_ACCESS_TOKEN;
   const projectRef = process.env.SUPABASE_PROJECT_REF;
   if (!token || !projectRef) throw new Error('Supabase provisioning requires SUPABASE_ACCESS_TOKEN and SUPABASE_PROJECT_REF.');
-  const response = await fetch(`https://api.supabase.com/v1/projects/${encodeURIComponent(projectRef)}/database/query`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ query }) });
-  if (!response.ok) throw new Error(`Supabase query failed (${response.status}).`);
-  const data: any = await response.json();
+  const response = await fetch(`https://api.supabase.com/v1/projects/${encodeURIComponent(projectRef)}/database/query`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ query: String(query), parameters: [], read_only: false }) });
+  const text = await response.text();
+  if (!response.ok) throw new Error(`Supabase query failed (${response.status}): ${text.slice(0, 300)}`);
+  const data: any = text ? JSON.parse(text) : {};
   return (data?.result ?? data?.data ?? data) as T;
 }
 export async function getMemories(sessionId: string, limit = 12): Promise<TheophanyMemory[]> {
