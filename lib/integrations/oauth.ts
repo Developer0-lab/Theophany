@@ -36,27 +36,27 @@ function decryptToken(value: string) {
   return Buffer.concat([decipher.update(fromBase64Url(parts[3])), decipher.final()]).toString('utf8');
 }
 
-export async function saveOAuthState(sessionId: string, provider: string) {
+export async function saveOAuthState(sessionId: string, provider: string, metadata: Record<string, any> = {}) {
   await ensureIntegrationTables();
   const state = crypto.randomBytes(32).toString('hex');
-  await supabaseQuery('insert into public.theophany_oauth_states(state,session_id,provider,expires_at) values (' + sqlText(state) + ',' + sqlText(sessionId) + ',' + sqlText(provider) + ",now()+interval '10 minutes');");
+  await supabaseQuery('insert into public.theophany_oauth_states(state,session_id,provider,expires_at,metadata) values (' + sqlText(state) + ',' + sqlText(sessionId) + ',' + sqlText(provider) + ",now()+interval '10 minutes'," + sqlText(JSON.stringify(metadata)) + "::jsonb);");
   return state;
 }
 
 export async function consumeOAuthState(state: string, provider: string) {
   await ensureIntegrationTables();
-  const rows: any = await supabaseQuery('delete from public.theophany_oauth_states where state=' + sqlText(state) + ' and provider=' + sqlText(provider) + ' and expires_at>now() returning session_id;');
+  const rows: any = await supabaseQuery('delete from public.theophany_oauth_states where state=' + sqlText(state) + ' and provider=' + sqlText(provider) + ' and expires_at>now() returning session_id,metadata;');
   const row = Array.isArray(rows) ? rows[0] : null;
   if (!row?.session_id) throw new Error('OAuth state is invalid or expired.');
-  return row.session_id as string;
+  return { sessionId: row.session_id as string, metadata: row.metadata || {} };
 }
 
 export async function consumeOAuthStateAny(state: string) {
   await ensureIntegrationTables();
-  const rows: any = await supabaseQuery('delete from public.theophany_oauth_states where state=' + sqlText(state) + ' and expires_at>now() returning session_id,provider;');
+  const rows: any = await supabaseQuery('delete from public.theophany_oauth_states where state=' + sqlText(state) + ' and expires_at>now() returning session_id,provider,metadata;');
   const row = Array.isArray(rows) ? rows[0] : null;
   if (!row?.session_id || !row?.provider) throw new Error('OAuth state is invalid or expired.');
-  return { sessionId: row.session_id as string, provider: row.provider as string };
+  return { sessionId: row.session_id as string, provider: row.provider as string, metadata: row.metadata || {} };
 }
 
 export async function saveIntegration(sessionId: string, provider: string, tokens: { accessToken: string; refreshToken?: string; expiresAt?: string; scopes?: string[]; metadata?: any }) {
