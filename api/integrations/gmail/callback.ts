@@ -12,8 +12,7 @@ export default async function handler(req: any, res: any) {
     const clientId = process.env.GOOGLE_CLIENT_ID;
     const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
     if (!clientId || !clientSecret) throw new Error('Gmail OAuth credentials are not configured.');
-    const origin = `${req.headers?.['x-forwarded-proto'] || 'https'}://${req.headers?.host || 'theophany.vercel.app'}`;
-    const redirectUri = `${origin}/api/integrations/gmail/callback`;
+    const redirectUri = 'https://theophany.vercel.app/api/integrations/gmail/callback';
     const tokenResponse = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ code, client_id: clientId, client_secret: clientSecret, redirect_uri: redirectUri, grant_type: 'authorization_code' }) });
     const token = await tokenResponse.json();
     if (!tokenResponse.ok || !token.access_token) throw new Error(token.error_description || 'Google token exchange failed.');
