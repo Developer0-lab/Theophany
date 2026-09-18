@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'crypto';
 import { sqlText, supabaseQuery } from '../theophany';
 
 let tablesReady = false;
@@ -19,13 +19,13 @@ function secretValue() {
 function key() { return createHash('sha256').update(secretValue(), 'utf8').digest(); }
 function toBase64Url(data: Buffer) { return data.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, ''); }
 function fromBase64Url(value: string) { const padded = String(value).replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - String(value).length % 4) % 4); return Buffer.from(padded, 'base64'); }
+function makeUuid() { const h = randomBytes(16).toString('hex'); return h.slice(0,8) + '-' + h.slice(8,12) + '-4' + h.slice(13,16) + '-' + ((parseInt(h.slice(16,18),16) & 3) | 8).toString(16) + h.slice(18,20) + '-' + h.slice(20); }
 
 function encryptToken(value: string) {
   const iv = randomBytes(12);
   const cipher = createCipheriv('aes-256-gcm', key(), iv);
   const ciphertext = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()]);
-  const tag = cipher.getAuthTag();
-  return 'v2:' + toBase64Url(iv) + ':' + toBase64Url(tag) + ':' + toBase64Url(ciphertext);
+  return 'v2:' + toBase64Url(iv) + ':' + toBase64Url(cipher.getAuthTag()) + ':' + toBase64Url(ciphertext);
 }
 
 function decryptToken(value: string) {
@@ -61,7 +61,7 @@ export async function consumeOAuthStateAny(state: string) {
 
 export async function saveIntegration(sessionId: string, provider: string, tokens: { accessToken: string; refreshToken?: string; expiresAt?: string; scopes?: string[]; metadata?: any }) {
   await ensureIntegrationTables();
-  const id = randomUUID();
+  const id = makeUuid();
   const access = encryptToken(tokens.accessToken);
   const refresh = tokens.refreshToken ? encryptToken(tokens.refreshToken) : null;
   const expires = tokens.expiresAt ? sqlText(tokens.expiresAt) : 'null';
