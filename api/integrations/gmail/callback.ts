@@ -37,10 +37,7 @@ function encrypt(value: string) {
   return 'v2:' + b64url(iv) + ':' + b64url(cipher.getAuthTag()) + ':' + b64url(ciphertext);
 }
 
-function uuid() {
-  const h = crypto.randomBytes(16).toString('hex');
-  return h.slice(0,8) + '-' + h.slice(8,12) + '-4' + h.slice(13,16) + '-' + ((parseInt(h.slice(16,18),16) & 3) | 8).toString(16) + h.slice(18,20) + '-' + h.slice(20);
-}
+function uuid() { return crypto.randomUUID(); }
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'GET') return res.status(405).json({ ok: false, message: 'Method not allowed' });
