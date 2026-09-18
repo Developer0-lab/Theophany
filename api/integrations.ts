@@ -14,13 +14,13 @@ async function query(sql: string) {
       'Content-Type': 'application/json',
       Accept: 'application/json',
     },
-    body: JSON.stringify({ query: sql }),
+    body: JSON.stringify({ query: String(sql), parameters: [], read_only: false }),
   });
 
   const text = await response.text();
   let data: any = {};
   try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
-  if (!response.ok) throw new Error('Supabase query failed (' + response.status + ').');
+  if (!response.ok) throw new Error('Supabase query failed (' + response.status + '): ' + text.slice(0, 300));
   return data?.result ?? data?.data ?? data;
 }
 
