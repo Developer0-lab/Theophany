@@ -19,7 +19,7 @@ function secretValue() {
 function key() { return crypto.createHash('sha256').update(secretValue(), 'utf8').digest(); }
 function toBase64Url(data: Buffer) { return data.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, ''); }
 function fromBase64Url(value: string) { const padded = String(value).replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - String(value).length % 4) % 4); return Buffer.from(padded, 'base64'); }
-function makeUuid() { const h = crypto.randomBytes(16).toString('hex'); return h.slice(0,8) + '-' + h.slice(8,12) + '-4' + h.slice(13,16) + '-' + ((parseInt(h.slice(16,18),16) & 3) | 8).toString(16) + h.slice(18,20) + '-' + h.slice(20); }
+function makeUuid() { return crypto.randomUUID(); }
 
 function encryptToken(value: string) {
   const iv = crypto.randomBytes(12);
