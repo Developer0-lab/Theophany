@@ -1,4 +1,4 @@
-import { saveOAuthState } from '../../../../lib/integrations/oauth';
+import { saveOAuthState } from '../../../lib/integrations/oauth';
 
 export const config = { runtime: 'nodejs' };
 
