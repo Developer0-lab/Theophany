@@ -1,4 +1,5 @@
 import { getMemories, memoryContext, saveMemory } from '../lib/theophany';
+import { getIntegrationToken, getIntegrationStatuses } from '../lib/integrations/oauth';
 
 type FileChange = { path: string; content: string };
 type BuildResult = { summary: string; files: FileChange[]; sql?: string };
@@ -48,6 +49,198 @@ async function findVercelDeployment(commitSha: string) {
   const data: any = await r.json();
   return (data.deployments || []).find((d: any) => d.meta?.githubCommitSha === commitSha) || null;
 }
+
+async function googleFetch(sessionId: string, provider: string, url: string, init: any = {}) {
+  let access = await getIntegrationToken(sessionId, provider, 'access');
+  if (!access) throw new Error(`Connect ${provider === 'gmail' ? 'Gmail' : provider === 'google-drive' ? 'Google Drive' : 'Google Calendar'} first.`);
+  const call = async (token: string) => fetch(url, {
+    ...init,
+    headers: { ...(init.headers || {}), Authorization: `Bearer ${token}` },
+  });
+  let response = await call(access);
+  if (response.status === 401) {
+    const refresh = await getIntegrationToken(sessionId, provider, 'refresh');
+    if (refresh) {
+      const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          client_id: process.env.GOOGLE_CLIENT_ID || '',
+          client_secret: process.env.GOOGLE_CLIENT_SECRET || '',
+          refresh_token: refresh,
+          grant_type: 'refresh_token',
+        }),
+      });
+      if (tokenResponse.ok) {
+        const tokenData: any = await tokenResponse.json();
+        if (tokenData.access_token) {
+          access = tokenData.access_token;
+          response = await call(access);
+        }
+      }
+    }
+  }
+  return response;
+}
+
+function connectedProviderSet(statuses: any[]) {
+  return new Set((statuses || []).filter((x: any) => x?.status === 'connected').map((x: any) => x.provider));
+}
+
+function agentTools(providers: Set<string>) {
+  const tools: any[] = [];
+  if (providers.has('gmail')) {
+    tools.push(
+      { type: 'function', name: 'gmail_search', description: 'Search the user\'s Gmail messages. Use a Gmail search query such as newer_than:7d, from:alice@example.com, or subject:invoice.', parameters: { type: 'object', properties: { query: { type: 'string' }, max_results: { type: 'integer', minimum: 1, maximum: 10 } }, required: ['query'], additionalProperties: false } },
+      { type: 'function', name: 'gmail_get_message', description: 'Read one Gmail message by its message id.', parameters: { type: 'object', properties: { message_id: { type: 'string' } }, required: ['message_id'], additionalProperties: false } },
+      { type: 'function', name: 'gmail_send', description: 'Send an email from the connected Gmail account.', parameters: { type: 'object', properties: { to: { type: 'string' }, subject: { type: 'string' }, body: { type: 'string' } }, required: ['to', 'subject', 'body'], additionalProperties: false } }
+    );
+  }
+  if (providers.has('google-drive')) {
+    tools.push(
+      { type: 'function', name: 'drive_search', description: 'Search files in the connected Google Drive. Return matching file metadata.', parameters: { type: 'object', properties: { query: { type: 'string' }, max_results: { type: 'integer', minimum: 1, maximum: 10 } }, required: ['query'], additionalProperties: false } },
+      { type: 'function', name: 'drive_create_text_file', description: 'Create a plain text file in Google Drive.', parameters: { type: 'object', properties: { name: { type: 'string' }, content: { type: 'string' }, folder_id: { type: 'string' } }, required: ['name', 'content'], additionalProperties: false } }
+    );
+  }
+  if (providers.has('google-calendar')) {
+    tools.push(
+      { type: 'function', name: 'calendar_list_events', description: 'List upcoming events from the connected Google Calendar.', parameters: { type: 'object', properties: { max_results: { type: 'integer', minimum: 1, maximum: 20 }, days: { type: 'integer', minimum: 1, maximum: 30 } }, required: [], additionalProperties: false } },
+      { type: 'function', name: 'calendar_create_event', description: 'Create an event on the connected Google Calendar. Use ISO 8601 date-times with timezone offsets.', parameters: { type: 'object', properties: { summary: { type: 'string' }, description: { type: 'string' }, start: { type: 'string' }, end: { type: 'string' }, timezone: { type: 'string' } }, required: ['summary', 'start', 'end'], additionalProperties: false } }
+    );
+  }
+  return tools;
+}
+
+async function executeAgentTool(sessionId: string, name: string, args: any): Promise<any> {
+  if (name === 'gmail_search') {
+    const query = encodeURIComponent(String(args.query || ''));
+    const max = Math.min(Math.max(Number(args.max_results || 5), 1), 10);
+    const r = await googleFetch(sessionId, 'gmail', `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${query}&maxResults=${max}`);
+    if (!r.ok) throw new Error(`Gmail search failed (${r.status}).`);
+    const data: any = await r.json();
+    return { messages: (data.messages || []).map((m: any) => ({ id: m.id, threadId: m.threadId })), resultSizeEstimate: data.resultSizeEstimate || 0 };
+  }
+  if (name === 'gmail_get_message') {
+    const id = encodeURIComponent(String(args.message_id || ''));
+    const r = await googleFetch(sessionId, 'gmail', `https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject&metadataHeaders=Date`);
+    if (!r.ok) throw new Error(`Gmail message read failed (${r.status}).`);
+    const data: any = await r.json();
+    return { id: data.id, snippet: data.snippet, headers: data.payload?.headers || [] };
+  }
+  if (name === 'gmail_send') {
+    const raw = [
+      `To: ${args.to}`,
+      `Subject: ${args.subject}`,
+      'Content-Type: text/plain; charset=UTF-8',
+      '',
+      String(args.body || ''),
+    ].join('\\r\\n');
+    const encoded = Buffer.from(raw, 'utf8').toString('base64url');
+    const r = await googleFetch(sessionId, 'gmail', 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ raw: encoded }) });
+    if (!r.ok) throw new Error(`Gmail send failed (${r.status}).`);
+    const data: any = await r.json();
+    return { sent: true, id: data.id, threadId: data.threadId };
+  }
+  if (name === 'drive_search') {
+    const q = String(args.query || '').replace(/'/g, "\\'");
+    const max = Math.min(Math.max(Number(args.max_results || 10), 1), 10);
+    const r = await googleFetch(sessionId, 'google-drive', `https://www.googleapis.com/drive/v3/files?q=name contains '${q}' and trashed=false&orderBy=modifiedTime desc&pageSize=${max}&fields=files(id,name,mimeType,webViewLink,modifiedTime,size)`);
+    if (!r.ok) throw new Error(`Google Drive search failed (${r.status}).`);
+    const data: any = await r.json();
+    return { files: data.files || [] };
+  }
+  if (name === 'drive_create_text_file') {
+    const metadata: any = { name: String(args.name), mimeType: 'text/plain' };
+    if (args.folder_id) metadata.parents = [String(args.folder_id)];
+    const boundary = 'theophany_' + crypto.randomUUID();
+    const body = [
+      `--${boundary}`,
+      'Content-Type: application/json; charset=UTF-8',
+      '',
+      JSON.stringify(metadata),
+      `--${boundary}`,
+      'Content-Type: text/plain',
+      '',
+      String(args.content || ''),
+      `--${boundary}--`,
+      '',
+    ].join('\\r\\n');
+    const r = await googleFetch(sessionId, 'google-drive', 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink', { method: 'POST', headers: { 'Content-Type': `multipart/related; boundary=${boundary}` }, body });
+    if (!r.ok) throw new Error(`Google Drive create failed (${r.status}).`);
+    return await r.json();
+  }
+  if (name === 'calendar_list_events') {
+    const max = Math.min(Math.max(Number(args.max_results || 10), 1), 20);
+    const days = Math.min(Math.max(Number(args.days || 7), 1), 30);
+    const timeMin = new Date().toISOString();
+    const timeMax = new Date(Date.now() + days * 86400000).toISOString();
+    const r = await googleFetch(sessionId, 'google-calendar', `https://www.googleapis.com/calendar/v3/calendars/primary/events?singleEvents=true&orderBy=startTime&maxResults=${max}&timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}`);
+    if (!r.ok) throw new Error(`Google Calendar read failed (${r.status}).`);
+    const data: any = await r.json();
+    return { events: (data.items || []).map((e: any) => ({ id: e.id, summary: e.summary, start: e.start, end: e.end, location: e.location })) };
+  }
+  if (name === 'calendar_create_event') {
+    const event: any = { summary: String(args.summary), start: { dateTime: String(args.start), timeZone: String(args.timezone || 'UTC') }, end: { dateTime: String(args.end), timeZone: String(args.timezone || 'UTC') } };
+    if (args.description) event.description = String(args.description);
+    const r = await googleFetch(sessionId, 'google-calendar', 'https://www.googleapis.com/calendar/v3/calendars/primary/events', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(event) });
+    if (!r.ok) throw new Error(`Google Calendar create failed (${r.status}).`);
+    const data: any = await r.json();
+    return { created: true, id: data.id, summary: data.summary, htmlLink: data.htmlLink, start: data.start, end: data.end };
+  }
+  throw new Error(`Unknown agent tool: ${name}`);
+}
+
+async function runServiceAgent(sessionId: string, request: string, memories: any[], events: any[]) {
+  const statuses = await getIntegrationStatuses(sessionId).catch(() => []);
+  const providers = connectedProviderSet(statuses);
+  const tools = agentTools(providers);
+  if (!tools.length) return null;
+  const response = await fetch('https://api.openai.com/v1/responses', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: process.env.THEOPHANY_MODEL || 'gpt-5.4-mini',
+      input: [
+        { role: 'system', content: `You are Theophany Agent Mode. You build software AND can operate connected Google services through tools. Use tools when the user asks you to read/search/send Gmail, manage Google Drive files, or read/create Google Calendar events. Do not claim an action happened unless the tool succeeded. Keep responses concise. Shared memory: ${memoryContext(memories)}` },
+        { role: 'user', content: request },
+      ],
+      tools,
+    }),
+  });
+  if (!response.ok) throw new Error(`OpenAI agent request failed (${response.status}).`);
+  let data: any = await response.json();
+  let input = data.output || [];
+  for (let round = 0; round < 6; round++) {
+    const calls = input.filter((x: any) => x?.type === 'function_call');
+    if (!calls.length) {
+      const reply = String(data.output_text || '').trim();
+      return reply || null;
+    }
+    const outputs: any[] = [];
+    for (const call of calls) {
+      const args = JSON.parse(call.arguments || '{}');
+      stage(events, 'Agent', `Using connected service: ${call.name}.`);
+      try {
+        const result = await executeAgentTool(sessionId, call.name, args);
+        outputs.push({ type: 'function_call_output', call_id: call.call_id, output: JSON.stringify(result) });
+        stage(events, 'Agent', `${call.name} completed.`, true);
+      } catch (error: any) {
+        outputs.push({ type: 'function_call_output', call_id: call.call_id, output: JSON.stringify({ error: error?.message || 'Tool failed.' }) });
+        stage(events, 'Agent', `${call.name} failed.`);
+      }
+    }
+    const follow = await fetch('https://api.openai.com/v1/responses', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: process.env.THEOPHANY_MODEL || 'gpt-5.4-mini', previous_response_id: data.id, input: outputs, tools }),
+    });
+    if (!follow.ok) throw new Error(`OpenAI agent continuation failed (${follow.status}).`);
+    data = await follow.json();
+    input = data.output || [];
+  }
+  throw new Error('Agent tool loop reached its safety limit.');
+}
+
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') return res.status(405).json({ ok: false, message: 'Method not allowed' });
   const text = String(req.body?.text || '').trim();
@@ -79,6 +272,7 @@ export default async function handler(req: any, res: any) {
       stage(events, 'Memory', 'Shared chat context saved for Agent Mode.', true);
       return res.status(200).json({ ok: true, reply, events, memories_used: memories.length });
     }
+    if (String(req.body?.mode || '').trim() === 'agent') { const serviceReply = await runServiceAgent(sessionId, text, memories, events); if (serviceReply) { await saveMemory(sessionId, `Agent: User requested: ${text}`, 'agent_user', 6).catch(() => {}); await saveMemory(sessionId, `Agent: Theophany replied: ${serviceReply.slice(0, 1200)}`, 'agent_service_result', 7).catch(() => {}); stage(events, 'Complete', 'Connected service work completed.', true); return res.status(200).json({ ok: true, message: serviceReply, events, service_agent: true }); } }
     const lower = text.toLowerCase();
     const needsSupabase = /\bsupabase\b|database|authentication|auth|user accounts|storage|realtime|chat/.test(lower);
     const needsVercel = /\bvercel\b|deploy|publish|go live/.test(lower);
