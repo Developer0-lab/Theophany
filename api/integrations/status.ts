@@ -100,6 +100,7 @@ export default async function handler(req:any,res:any) {
     const sessionId = String(req.query?.session_id || '').trim();
     if (!sessionId) return res.status(400).json({ ok:false, message:'session_id is required.' });
     const integrations = await getIntegrationStatuses(sessionId);
+    if (process.env.STRIPE_SECRET_KEY && !integrations.some((item:any) => item.provider === 'stripe')) integrations.push({ provider:'stripe', status:'connected', scopes:[], metadata:{ mode:'server' } });
     return res.status(200).json({ ok:true, integrations });
   } catch (error:any) {
     console.error('THEOPHANY_INTEGRATION_STATUS_ERROR', error);
