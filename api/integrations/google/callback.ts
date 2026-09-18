@@ -1,4 +1,4 @@
-import { consumeOAuthState, saveIntegration } from '../../../../lib/integrations/oauth';
+import { consumeOAuthStateAny, saveIntegration } from '../../../../lib/integrations/oauth';
 
 export const config = { runtime: 'nodejs' };
 
@@ -10,9 +10,8 @@ export default async function handler(req: any, res: any) {
     const error = String(req.query?.error || '').trim();
     if (error) return res.redirect('/?integration=google&status=denied&reason=' + encodeURIComponent(error));
     if (!code || !state) return res.status(400).json({ ok: false, message: 'Missing OAuth code or state.' });
-    const sessionId = await consumeOAuthState(state, String(req.query?.provider || '').trim() || 'google');
-    const storedRows: any[] = [];
-    void storedRows;
+    const oauth = await consumeOAuthStateAny(state);
+    if (oauth.provider !== 'google-drive' && oauth.provider !== 'google-calendar') throw new Error('Unsupported Google OAuth provider.');
     const clientId = process.env.GOOGLE_CLIENT_ID;
     const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
     if (!clientId || !clientSecret) throw new Error('Google OAuth credentials are not configured.');
@@ -22,9 +21,8 @@ export default async function handler(req: any, res: any) {
     const token = await tokenResponse.json();
     if (!tokenResponse.ok || !token.access_token) throw new Error(token.error_description || 'Google token exchange failed.');
     const expiresAt = new Date(Date.now() + Number(token.expires_in || 3600) * 1000).toISOString();
-    const provider = String(token.scope || '').includes('calendar') ? 'google-calendar' : 'google-drive';
-    await saveIntegration(sessionId, provider, { accessToken: token.access_token, refreshToken: token.refresh_token, expiresAt, scopes: String(token.scope || '').split(' ').filter(Boolean), metadata: { token_type: token.token_type || 'Bearer' } });
-    return res.redirect('/?integration=' + provider + '&status=connected');
+    await saveIntegration(oauth.sessionId, oauth.provider, { accessToken: token.access_token, refreshToken: token.refresh_token, expiresAt, scopes: String(token.scope || '').split(' ').filter(Boolean), metadata: { token_type: token.token_type || 'Bearer' } });
+    return res.redirect('/?integration=' + oauth.provider + '&status=connected');
   } catch (error: any) {
     console.error('THEOPHANY_GOOGLE_CALLBACK_ERROR', error);
     return res.redirect('/?integration=google&status=error&reason=' + encodeURIComponent(error?.message || 'OAuth failed'));
