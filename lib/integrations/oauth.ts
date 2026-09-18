@@ -4,9 +4,7 @@ let tablesReady = false;
 
 async function ensureIntegrationTables() {
   if (tablesReady) return;
-  const rows = await supabaseQuery<any>(
-    "select to_regclass('public.theophany_integrations') as integrations_table, to_regclass('public.theophany_oauth_states') as oauth_states_table;"
-  );
+  const rows = await supabaseQuery<any>("select to_regclass('public.theophany_integrations') as integrations_table, to_regclass('public.theophany_oauth_states') as oauth_states_table;");
   if (!Array.isArray(rows) || !rows[0]?.integrations_table || !rows[0]?.oauth_states_table) throw new Error('Integration storage tables are not ready.');
   tablesReady = true;
 }
@@ -58,18 +56,24 @@ async function decryptToken(value: string) {
 export async function saveOAuthState(sessionId: string, provider: string) {
   await ensureIntegrationTables();
   const state = randomHex(32);
-  const sql = 'insert into public.theophany_oauth_states(state,session_id,provider,expires_at) values (' + sqlText(state) + ',' + sqlText(sessionId) + ',' + sqlText(provider) + ",now()+interval '10 minutes');";
-  await supabaseQuery(sql);
+  await supabaseQuery('insert into public.theophany_oauth_states(state,session_id,provider,expires_at) values (' + sqlText(state) + ',' + sqlText(sessionId) + ',' + sqlText(provider) + ",now()+interval '10 minutes');");
   return state;
 }
 
 export async function consumeOAuthState(state: string, provider: string) {
   await ensureIntegrationTables();
-  const sql = 'delete from public.theophany_oauth_states where state=' + sqlText(state) + ' and provider=' + sqlText(provider) + ' and expires_at>now() returning session_id;';
-  const rows: any = await supabaseQuery(sql);
+  const rows: any = await supabaseQuery('delete from public.theophany_oauth_states where state=' + sqlText(state) + ' and provider=' + sqlText(provider) + ' and expires_at>now() returning session_id;');
   const row = Array.isArray(rows) ? rows[0] : null;
   if (!row?.session_id) throw new Error('OAuth state is invalid or expired.');
   return row.session_id as string;
+}
+
+export async function consumeOAuthStateAny(state: string) {
+  await ensureIntegrationTables();
+  const rows: any = await supabaseQuery('delete from public.theophany_oauth_states where state=' + sqlText(state) + ' and expires_at>now() returning session_id,provider;');
+  const row = Array.isArray(rows) ? rows[0] : null;
+  if (!row?.session_id || !row?.provider) throw new Error('OAuth state is invalid or expired.');
+  return { sessionId: row.session_id as string, provider: row.provider as string };
 }
 
 export async function saveIntegration(sessionId: string, provider: string, tokens: { accessToken: string; refreshToken?: string; expiresAt?: string; scopes?: string[]; metadata?: any }) {
@@ -81,27 +85,23 @@ export async function saveIntegration(sessionId: string, provider: string, token
   const scopesValue = '{' + (tokens.scopes || []).map(s => s.replace(/[{}",\\]/g, '')).join(',') + '}';
   const scopes = sqlText(scopesValue);
   const metadata = sqlText(JSON.stringify(tokens.metadata || {}));
-  const sql = 'insert into public.theophany_integrations(id,session_id,provider,status,access_token,refresh_token,expires_at,scopes,metadata) values (' + sqlText(id) + ',' + sqlText(sessionId) + ',' + sqlText(provider) + ",'connected'," + sqlText(access) + ',' + (refresh ? sqlText(refresh) : 'null') + ',' + expires + ',' + scopes + '::text[],' + metadata + "::jsonb) on conflict(session_id,provider) do update set status='connected',access_token=excluded.access_token,refresh_token=excluded.refresh_token,expires_at=excluded.expires_at,scopes=excluded.scopes,metadata=excluded.metadata,updated_at=now();";
-  await supabaseQuery(sql);
+  await supabaseQuery('insert into public.theophany_integrations(id,session_id,provider,status,access_token,refresh_token,expires_at,scopes,metadata) values (' + sqlText(id) + ',' + sqlText(sessionId) + ',' + sqlText(provider) + ",'connected'," + sqlText(access) + ',' + (refresh ? sqlText(refresh) : 'null') + ',' + expires + ',' + scopes + '::text[],' + metadata + "::jsonb) on conflict(session_id,provider) do update set status='connected',access_token=excluded.access_token,refresh_token=excluded.refresh_token,expires_at=excluded.expires_at,scopes=excluded.scopes,metadata=excluded.metadata,updated_at=now();");
 }
 
 export async function getIntegrationStatuses(sessionId: string) {
   await ensureIntegrationTables();
-  const sql = 'select provider,status,expires_at,scopes,metadata,updated_at from public.theophany_integrations where session_id=' + sqlText(sessionId) + ' order by provider;';
-  const rows: any = await supabaseQuery(sql);
+  const rows: any = await supabaseQuery('select provider,status,expires_at,scopes,metadata,updated_at from public.theophany_integrations where session_id=' + sqlText(sessionId) + ' order by provider;');
   return Array.isArray(rows) ? rows : [];
 }
 
 export async function disconnectIntegration(sessionId: string, provider: string) {
   await ensureIntegrationTables();
-  const sql = 'delete from public.theophany_integrations where session_id=' + sqlText(sessionId) + ' and provider=' + sqlText(provider) + ';';
-  await supabaseQuery(sql);
+  await supabaseQuery('delete from public.theophany_integrations where session_id=' + sqlText(sessionId) + ' and provider=' + sqlText(provider) + ';');
 }
 
 export async function getIntegrationToken(sessionId: string, provider: string, kind: 'access' | 'refresh' = 'access') {
   await ensureIntegrationTables();
-  const sql = 'select access_token,refresh_token from public.theophany_integrations where session_id=' + sqlText(sessionId) + ' and provider=' + sqlText(provider) + ' limit 1;';
-  const rows: any = await supabaseQuery(sql);
+  const rows: any = await supabaseQuery('select access_token,refresh_token from public.theophany_integrations where session_id=' + sqlText(sessionId) + ' and provider=' + sqlText(provider) + ' limit 1;');
   const row = Array.isArray(rows) ? rows[0] : null;
   const value = kind === 'refresh' ? row?.refresh_token : row?.access_token;
   return value ? decryptToken(value) : null;
