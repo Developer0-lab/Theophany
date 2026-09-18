@@ -1,3 +1,4 @@
+import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'node:crypto';
 import { sqlText, supabaseQuery } from '../theophany';
 
 let tablesReady = false;
@@ -15,47 +16,29 @@ function secretValue() {
   return value;
 }
 
-function randomHex(bytes: number) {
-  const data = new Uint8Array(bytes);
-  globalThis.crypto.getRandomValues(data);
-  return Array.from(data, b => b.toString(16).padStart(2, '0')).join('');
+function key() { return createHash('sha256').update(secretValue(), 'utf8').digest(); }
+function toBase64Url(data: Buffer) { return data.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, ''); }
+function fromBase64Url(value: string) { const padded = String(value).replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - String(value).length % 4) % 4); return Buffer.from(padded, 'base64'); }
+
+function encryptToken(value: string) {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', key(), iv);
+  const ciphertext = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return 'v2:' + toBase64Url(iv) + ':' + toBase64Url(tag) + ':' + toBase64Url(ciphertext);
 }
 
-function randomUuid() {
-  const data = new Uint8Array(16);
-  globalThis.crypto.getRandomValues(data);
-  data[6] = (data[6] & 0x0f) | 0x40;
-  data[8] = (data[8] & 0x3f) | 0x80;
-  const h = Array.from(data, b => b.toString(16).padStart(2, '0')).join('');
-  return h.slice(0, 8) + '-' + h.slice(8, 12) + '-' + h.slice(12, 16) + '-' + h.slice(16, 20) + '-' + h.slice(20);
-}
-
-function toBase64Url(data: Uint8Array) { return Buffer.from(data).toString('base64url'); }
-function fromBase64Url(value: string) { return new Uint8Array(Buffer.from(value, 'base64url')); }
-
-async function cryptoKey() {
-  const digest = await globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(secretValue()));
-  return globalThis.crypto.subtle.importKey('raw', digest, 'AES-GCM', false, ['encrypt', 'decrypt']);
-}
-
-async function encryptToken(value: string) {
-  const iv = new Uint8Array(12);
-  globalThis.crypto.getRandomValues(iv);
-  const encrypted = new Uint8Array(await globalThis.crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await cryptoKey(), new TextEncoder().encode(value)));
-  return 'v1:' + toBase64Url(iv) + ':' + toBase64Url(encrypted);
-}
-
-async function decryptToken(value: string) {
+function decryptToken(value: string) {
   const parts = String(value).split(':');
-  const version = parts[0], ivText = parts[1], dataText = parts[2];
-  if (version !== 'v1' || !ivText || !dataText) throw new Error('Invalid encrypted token.');
-  const decrypted = await globalThis.crypto.subtle.decrypt({ name: 'AES-GCM', iv: fromBase64Url(ivText) }, await cryptoKey(), fromBase64Url(dataText));
-  return new TextDecoder().decode(decrypted);
+  if (parts[0] !== 'v2' || !parts[1] || !parts[2] || !parts[3]) throw new Error('Invalid encrypted token.');
+  const decipher = createDecipheriv('aes-256-gcm', key(), fromBase64Url(parts[1]));
+  decipher.setAuthTag(fromBase64Url(parts[2]));
+  return Buffer.concat([decipher.update(fromBase64Url(parts[3])), decipher.final()]).toString('utf8');
 }
 
 export async function saveOAuthState(sessionId: string, provider: string) {
   await ensureIntegrationTables();
-  const state = randomHex(32);
+  const state = randomBytes(32).toString('hex');
   await supabaseQuery('insert into public.theophany_oauth_states(state,session_id,provider,expires_at) values (' + sqlText(state) + ',' + sqlText(sessionId) + ',' + sqlText(provider) + ",now()+interval '10 minutes');");
   return state;
 }
@@ -78,9 +61,9 @@ export async function consumeOAuthStateAny(state: string) {
 
 export async function saveIntegration(sessionId: string, provider: string, tokens: { accessToken: string; refreshToken?: string; expiresAt?: string; scopes?: string[]; metadata?: any }) {
   await ensureIntegrationTables();
-  const id = randomUuid();
-  const access = await encryptToken(tokens.accessToken);
-  const refresh = tokens.refreshToken ? await encryptToken(tokens.refreshToken) : null;
+  const id = randomUUID();
+  const access = encryptToken(tokens.accessToken);
+  const refresh = tokens.refreshToken ? encryptToken(tokens.refreshToken) : null;
   const expires = tokens.expiresAt ? sqlText(tokens.expiresAt) : 'null';
   const scopesValue = '{' + (tokens.scopes || []).map(s => s.replace(/[{}",\\]/g, '')).join(',') + '}';
   const scopes = sqlText(scopesValue);
