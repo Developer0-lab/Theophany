@@ -1,4 +1,4 @@
-import { consumeOAuthStateAny, saveIntegration } from '../../../../lib/integrations/oauth';
+import { consumeOAuthStateAny, saveIntegration } from '../../../lib/integrations/oauth';
 
 export const config = { runtime: 'nodejs' };
 
