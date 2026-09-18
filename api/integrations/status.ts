@@ -1,109 +1,16 @@
-import { consumeOAuthStateAny, getIntegrationStatuses, saveIntegration, saveOAuthState } from '../../lib/integrations/oauth.ts';
-
-export const config = { runtime: 'nodejs' };
-
-const REDIRECT = 'https://theophany.vercel.app/api/integrations/status?action=callback';
-
-const configs: Record<string, any> = {
-  instagram: { kind:'meta', scope:'pages_show_list,pages_read_engagement,instagram_basic,instagram_content_publish,business_management' },
-  facebook: { kind:'meta', scope:'pages_show_list,pages_read_engagement,pages_manage_posts,business_management' },
-  whatsapp: { kind:'meta', scope:'business_management,whatsapp_business_management,whatsapp_business_messaging' },
-  tiktok: { kind:'tiktok', scope:'user.info.basic,video.list,video.publish' },
-  notion: { kind:'notion' },
-  canva: { kind:'canva', scope:'design:read,design:write,asset:read,asset:write,profile:read' }
-};
-
-function missing(envs: string[]) { return envs.filter(name => !process.env[name]); }
-
-async function start(req: any, res: any) {
-  const sessionId = String(req.query?.session_id || '').trim();
-  const provider = String(req.query?.provider || '').trim();
-  if (!sessionId) return res.status(400).json({ ok:false, message:'session_id is required.' });
-  const cfg = configs[provider];
-  if (!cfg) return res.status(400).json({ ok:false, message:'Unsupported integration.' });
-
-  if (cfg.kind === 'meta') {
-    const miss = missing(['META_CLIENT_ID','META_CLIENT_SECRET']);
-    if (miss.length) return res.status(503).json({ ok:false, setup_required:true, message:'Meta credentials are not configured: ' + miss.join(', ') });
-    const state = await saveOAuthState(sessionId, provider);
-    const params = new URLSearchParams({ client_id:process.env.META_CLIENT_ID!, redirect_uri:REDIRECT, response_type:'code', state, scope:cfg.scope });
-    return res.redirect('https://www.facebook.com/v23.0/dialog/oauth?' + params.toString());
-  }
-
-  if (cfg.kind === 'tiktok') {
-    const miss = missing(['TIKTOK_CLIENT_KEY','TIKTOK_CLIENT_SECRET']);
-    if (miss.length) return res.status(503).json({ ok:false, setup_required:true, message:'TikTok credentials are not configured: ' + miss.join(', ') });
-    const state = await saveOAuthState(sessionId, provider);
-    const params = new URLSearchParams({ client_key:process.env.TIKTOK_CLIENT_KEY!, response_type:'code', scope:cfg.scope, redirect_uri:REDIRECT, state });
-    return res.redirect('https://www.tiktok.com/v2/auth/authorize/?' + params.toString());
-  }
-
-  if (cfg.kind === 'notion') {
-    const miss = missing(['NOTION_CLIENT_ID','NOTION_CLIENT_SECRET']);
-    if (miss.length) return res.status(503).json({ ok:false, setup_required:true, message:'Notion credentials are not configured: ' + miss.join(', ') });
-    const state = await saveOAuthState(sessionId, provider);
-    const params = new URLSearchParams({ client_id:process.env.NOTION_CLIENT_ID!, response_type:'code', owner:'user', redirect_uri:REDIRECT, state });
-    return res.redirect('https://api.notion.com/v1/oauth/authorize?' + params.toString());
-  }
-
-  const miss = missing(['CANVA_CLIENT_ID','CANVA_CLIENT_SECRET']);
-  if (miss.length) return res.status(503).json({ ok:false, setup_required:true, message:'Canva credentials are not configured: ' + miss.join(', ') });
-  const verifier = require('crypto').randomBytes(64).toString('base64url');
-  const challenge = require('crypto').createHash('sha256').update(verifier).digest('base64url');
-  const state = await saveOAuthState(sessionId, provider, { code_verifier: verifier });
-  const params = new URLSearchParams({ code_challenge:challenge, code_challenge_method:'s256', scope:cfg.scope, response_type:'code', client_id:process.env.CANVA_CLIENT_ID!, state, redirect_uri:REDIRECT });
-  return res.redirect('https://www.canva.com/api/oauth/authorize?' + params.toString());
-}
-
-async function callback(req: any, res: any) {
-  const state = String(req.query?.state || '').trim();
-  const code = String(req.query?.code || '').trim();
-  const error = String(req.query?.error || '').trim();
-  if (error) return res.redirect('/?integration=oauth&status=denied&reason=' + encodeURIComponent(error));
-  if (!state || !code) return res.status(400).json({ ok:false, message:'Missing OAuth code or state.' });
-
-  const { sessionId, provider, metadata } = await consumeOAuthStateAny(state);
-  let token:any = {};
-  let scopes:string[] = [];
-
-  if (provider === 'instagram' || provider === 'facebook' || provider === 'whatsapp') {
-    const response = await fetch('https://graph.facebook.com/v23.0/oauth/access_token', { method:'POST', headers:{'content-type':'application/x-www-form-urlencoded'}, body:new URLSearchParams({ client_id:process.env.META_CLIENT_ID!, client_secret:process.env.META_CLIENT_SECRET!, redirect_uri:REDIRECT, code }) });
-    token = await response.json();
-    if (!response.ok || !token.access_token) throw new Error(token.error?.message || 'Meta token exchange failed.');
-  } else if (provider === 'tiktok') {
-    const response = await fetch('https://open.tiktokapis.com/v2/oauth/token/', { method:'POST', headers:{'content-type':'application/x-www-form-urlencoded'}, body:new URLSearchParams({ client_key:process.env.TIKTOK_CLIENT_KEY!, client_secret:process.env.TIKTOK_CLIENT_SECRET!, code, grant_type:'authorization_code', redirect_uri:REDIRECT }) });
-    token = await response.json();
-    if (!response.ok || !token.access_token) throw new Error(token.error_description || token.error || 'TikTok token exchange failed.');
-  } else if (provider === 'notion') {
-    const credentials = Buffer.from(process.env.NOTION_CLIENT_ID! + ':' + process.env.NOTION_CLIENT_SECRET!).toString('base64');
-    const response = await fetch('https://api.notion.com/v1/oauth/token', { method:'POST', headers:{ Authorization:'Basic ' + credentials, 'Content-Type':'application/json' }, body:JSON.stringify({ grant_type:'authorization_code', code, redirect_uri:REDIRECT }) });
-    token = await response.json();
-    if (!response.ok || !token.access_token) throw new Error(token.error || token.message || 'Notion token exchange failed.');
-  } else if (provider === 'canva') {
-    const credentials = Buffer.from(process.env.CANVA_CLIENT_ID! + ':' + process.env.CANVA_CLIENT_SECRET!).toString('base64');
-    const response = await fetch('https://api.canva.com/rest/v1/oauth/token', { method:'POST', headers:{ Authorization:'Basic ' + credentials, 'Content-Type':'application/x-www-form-urlencoded' }, body:new URLSearchParams({ grant_type:'authorization_code', code_verifier:String(metadata?.code_verifier || ''), code, redirect_uri:REDIRECT }) });
-    token = await response.json();
-    if (!response.ok || !token.access_token) throw new Error(token.error || token.message || 'Canva token exchange failed.');
-  }
-
-  scopes = String(token.scope || '').split(/[ ,]/).filter(Boolean);
-  const expiresAt = token.expires_in ? new Date(Date.now() + Number(token.expires_in) * 1000).toISOString() : undefined;
-  await saveIntegration(sessionId, provider, { accessToken:token.access_token, refreshToken:token.refresh_token, expiresAt, scopes, metadata:{ token_type:token.token_type || 'Bearer', open_id:token.open_id, bot_id:token.bot_id, workspace_name:token.workspace_name } });
-  return res.redirect('/?integration=' + encodeURIComponent(provider) + '&status=connected');
-}
-
-export default async function handler(req:any,res:any) {
-  if (req.method !== 'GET') return res.status(405).json({ ok:false, message:'Method not allowed' });
-  try {
-    if (String(req.query?.action || '') === 'connect') return await start(req,res);
-    if (String(req.query?.action || '') === 'callback') return await callback(req,res);
-    const sessionId = String(req.query?.session_id || '').trim();
-    if (!sessionId) return res.status(400).json({ ok:false, message:'session_id is required.' });
-    const integrations = await getIntegrationStatuses(sessionId);
-    if (process.env.STRIPE_SECRET_KEY && !integrations.some((item:any) => item.provider === 'stripe')) integrations.push({ provider:'stripe', status:'connected', scopes:[], metadata:{ mode:'server' } });
-    return res.status(200).json({ ok:true, integrations });
-  } catch (error:any) {
-    console.error('THEOPHANY_INTEGRATION_STATUS_ERROR', error);
-    return res.status(503).json({ ok:false, integrations:[], setup_required:true, message:error?.message || 'Integration service is not ready.' });
-  }
-}
+import crypto from 'crypto';
+export const config={runtime:'nodejs'};
+const q=(v:string)=>"'" + v.replace(/'/g,"''") + "'";
+async function sql(query:string){const t=process.env.SUPABASE_ACCESS_TOKEN,r=process.env.SUPABASE_PROJECT_REF;if(!t||!r)throw new Error('Supabase is not configured.');const x=await fetch('https://api.supabase.com/v1/projects/'+encodeURIComponent(r)+'/database/query',{method:'POST',headers:{Authorization:'Bearer '+t,'Content-Type':'application/json'},body:JSON.stringify({query,parameters:[],read_only:false})});const s=await x.text();if(!x.ok)throw new Error(s.slice(0,300));const d:any=s?JSON.parse(s):{};return d?.result??d?.data??d}
+function enc(v:string){const k=crypto.createHash('sha256').update(process.env.THEOPHANY_TOKEN_ENCRYPTION_KEY||'').digest();const iv=crypto.randomBytes(12);const c=crypto.createCipheriv('aes-256-gcm',k,iv);const b=Buffer.concat([c.update(v,'utf8'),c.final()]);const u=(x:Buffer)=>x.toString('base64').replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/g,'');return 'v2:'+u(iv)+':'+u(c.getAuthTag())+':'+u(b)}
+const redirect='https://theophany.vercel.app/api/integrations/status?action=callback';
+const cfg:any={instagram:['meta','pages_show_list,pages_read_engagement,instagram_basic,instagram_content_publish,business_management'],facebook:['meta','pages_show_list,pages_read_engagement,pages_manage_posts,business_management'],whatsapp:['meta','business_management,whatsapp_business_management,whatsapp_business_messaging'],tiktok:['tiktok','user.info.basic,video.list,video.publish'],notion:['notion',''],canva:['canva','design:read,design:write,asset:read,asset:write,profile:read']};
+async function connect(req:any,res:any){const s=String(req.query?.session_id||''),p=String(req.query?.provider||''),c=cfg[p];if(!s)return res.status(400).json({ok:false,message:'session_id is required.'});if(!c)return res.status(400).json({ok:false,message:'Unsupported integration.'});let meta:any={};let url='';let params:any={};
+if(c[0]==='meta'){if(!process.env.META_CLIENT_ID||!process.env.META_CLIENT_SECRET)return res.status(503).json({ok:false,setup_required:true,message:'Meta credentials are not configured.'});params={client_id:process.env.META_CLIENT_ID,redirect_uri:redirect,response_type:'code',state:await state(s,p),scope:c[1]};url='https://www.facebook.com/v23.0/dialog/oauth?';}
+else if(c[0]==='tiktok'){if(!process.env.TIKTOK_CLIENT_KEY||!process.env.TIKTOK_CLIENT_SECRET)return res.status(503).json({ok:false,setup_required:true,message:'TikTok credentials are not configured.'});params={client_key:process.env.TIKTOK_CLIENT_KEY,response_type:'code',scope:c[1],redirect_uri:redirect,state:await state(s,p)};url='https://www.tiktok.com/v2/auth/authorize/?';}
+else if(c[0]==='notion'){if(!process.env.NOTION_CLIENT_ID||!process.env.NOTION_CLIENT_SECRET)return res.status(503).json({ok:false,setup_required:true,message:'Notion credentials are not configured.'});params={client_id:process.env.NOTION_CLIENT_ID,response_type:'code',owner:'user',redirect_uri:redirect,state:await state(s,p)};url='https://api.notion.com/v1/oauth/authorize?';}
+else{if(!process.env.CANVA_CLIENT_ID||!process.env.CANVA_CLIENT_SECRET)return res.status(503).json({ok:false,setup_required:true,message:'Canva credentials are not configured.'});const v=crypto.randomBytes(64).toString('base64url');const ch=crypto.createHash('sha256').update(v).digest('base64url');params={code_challenge:ch,code_challenge_method:'s256',scope:c[1],response_type:'code',client_id:process.env.CANVA_CLIENT_ID,state:await state(s,p,{code_verifier:v}),redirect_uri:redirect};url='https://www.canva.com/api/oauth/authorize?';}
+return res.redirect(url+new URLSearchParams(params).toString())}
+async function state(s:string,p:string,m:any={}){const x=crypto.randomBytes(32).toString('hex');await sql('insert into public.theophany_oauth_states(state,session_id,provider,expires_at,metadata) values('+q(x)+','+q(s)+','+q(p)+",now()+interval '10 minutes',"+q(JSON.stringify(m))+'::jsonb);');return x}
+async function callback(req:any,res:any){const st=String(req.query?.state||''),code=String(req.query?.code||''),err=String(req.query?.error||'');if(err)return res.redirect('/?integration=oauth&status=denied&reason='+encodeURIComponent(err));const rows:any=await sql('delete from public.theophany_oauth_states where state='+q(st)+" and expires_at>now() returning session_id,provider,metadata;");const row=Array.isArray(rows)?rows[0]:null;if(!row||!code)throw new Error('OAuth state is invalid or expired.');let t:any={};if(['instagram','facebook','whatsapp'].includes(row.provider)){const x=await fetch('https://graph.facebook.com/v23.0/oauth/access_token',{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({client_id:process.env.META_CLIENT_ID||'',client_secret:process.env.META_CLIENT_SECRET||'',redirect_uri:redirect,code})});t=await x.json();if(!x.ok||!t.access_token)throw new Error(t.error?.message||'Meta token exchange failed.')}else if(row.provider==='tiktok'){const x=await fetch('https://open.tiktokapis.com/v2/oauth/token/',{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({client_key:process.env.TIKTOK_CLIENT_KEY||'',client_secret:process.env.TIKTOK_CLIENT_SECRET||'',code,grant_type:'authorization_code',redirect_uri:redirect})});t=await x.json();if(!x.ok||!t.access_token)throw new Error(t.error_description||t.error||'TikTok token exchange failed.')}else if(row.provider==='notion'){const b=Buffer.from((process.env.NOTION_CLIENT_ID||'')+':'+(process.env.NOTION_CLIENT_SECRET||'')).toString('base64');const x=await fetch('https://api.notion.com/v1/oauth/token',{method:'POST',headers:{Authorization:'Basic '+b,'Content-Type':'application/json'},body:JSON.stringify({grant_type:'authorization_code',code,redirect_uri:redirect})});t=await x.json();if(!x.ok||!t.access_token)throw new Error(t.error||t.message||'Notion token exchange failed.')}else{const b=Buffer.from((process.env.CANVA_CLIENT_ID||'')+':'+(process.env.CANVA_CLIENT_SECRET||'')).toString('base64');const x=await fetch('https://api.canva.com/rest/v1/oauth/token',{method:'POST',headers:{Authorization:'Basic '+b,'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({grant_type:'authorization_code',code_verifier:String(row.metadata?.code_verifier||''),code,redirect_uri:redirect})});t=await x.json();if(!x.ok||!t.access_token)throw new Error(t.error||t.message||'Canva token exchange failed.')}const access=enc(t.access_token),refresh=t.refresh_token?enc(t.refresh_token):null,expires=t.expires_in?q(new Date(Date.now()+Number(t.expires_in)*1000).toISOString()):'null',sc=q('{'+String(t.scope||'').split(/[ ,]/).filter(Boolean).map((x:string)=>x.replace(/[{}",\\]/g,'')).join(',')+'}'),md=q(JSON.stringify({token_type:t.token_type||'Bearer',open_id:t.open_id,bot_id:t.bot_id,workspace_name:t.workspace_name}));await sql('insert into public.theophany_integrations(id,session_id,provider,status,access_token,refresh_token,expires_at,scopes,metadata) values('+q(crypto.randomUUID())+','+q(row.session_id)+','+q(row.provider)+",'connected',"+q(access)+','+(refresh?q(refresh):'null')+','+expires+','+sc+'::text[],'+md+"::jsonb) on conflict(session_id,provider) do update set status='connected',access_token=excluded.access_token,refresh_token=excluded.refresh_token,expires_at=excluded.expires_at,scopes=excluded.scopes,metadata=excluded.metadata,updated_at=now();");return res.redirect('/?integration='+encodeURIComponent(row.provider)+'&status=connected')}
+export default async function handler(req:any,res:any){if(req.method!=='GET')return res.status(405).json({ok:false,message:'Method not allowed'});try{const a=String(req.query?.action||'');if(a==='connect')return connect(req,res);if(a==='callback')return callback(req,res);const s=String(req.query?.session_id||'');if(!s)return res.status(400).json({ok:false,message:'session_id is required.'});const rows:any=await sql('select provider,status,expires_at,scopes,metadata,updated_at from public.theophany_integrations where session_id='+q(s)+' order by provider;');const list=Array.isArray(rows)?rows:[];if(process.env.STRIPE_SECRET_KEY&&!list.some((x:any)=>x.provider==='stripe'))list.push({provider:'stripe',status:'connected',metadata:{mode:'server'}});return res.status(200).json({ok:true,integrations:list})}catch(e:any){console.error('THEOPHANY_INTEGRATION_STATUS_ERROR',e);return res.status(503).json({ok:false,integrations:[],setup_required:true,message:e?.message||'Integration service is not ready.'})}}
