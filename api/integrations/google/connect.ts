@@ -1,6 +1,6 @@
 import { saveOAuthState } from '../../../lib/integrations/oauth';
 
-export const config = { runtime: 'nodejs22.x' };
+export const config = { runtime: 'nodejs' };
 
 const scopes: Record<string,string> = {
   'google-drive': 'openid email https://www.googleapis.com/auth/drive',
