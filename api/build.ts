@@ -58,6 +58,27 @@ export default async function handler(req: any, res: any) {
     stage(events, 'Understand', 'Reading your request.', true);
     const memories = await getMemories(sessionId, 12).catch(() => []);
     if (memories.length) stage(events, 'Memory', `Loaded ${memories.length} relevant memories.`, true);
+    if (String(req.body?.mode || '').trim() === 'chat') {
+      const response = await fetch('https://api.openai.com/v1/responses', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: process.env.THEOPHANY_MODEL || 'gpt-5.4-mini',
+          input: [
+            { role: 'system', content: `You are Theophany in Chat Mode. Have a natural, concise conversation with the user. Discuss general topics, planning, updates, projects, goals, and everyday questions. Do not build or deploy software in Chat Mode; if the user asks to build software, tell them to switch to Agent Mode. Use the shared session memory below when relevant and never invent facts. SHARED SESSION MEMORY:\\n${memoryContext(memories)}` },
+            { role: 'user', content: text },
+          ],
+        }),
+      });
+      if (!response.ok) throw new Error(`OpenAI request failed (${response.status}).`);
+      const data: any = await response.json();
+      const reply = String(data.output_text || data.output?.map((x: any) => x.content?.map((c: any) => c.text || '').join('')).join('') || '').trim();
+      if (!reply) throw new Error('The chat service returned no response.');
+      await saveMemory(sessionId, `Chat: User said: ${text}`, 'chat_user', 5).catch(() => {});
+      await saveMemory(sessionId, `Chat: Theophany replied: ${reply.slice(0, 1200)}`, 'chat_assistant', 5).catch(() => {});
+      stage(events, 'Memory', 'Shared chat context saved for Agent Mode.', true);
+      return res.status(200).json({ ok: true, reply, events, memories_used: memories.length });
+    }
     const lower = text.toLowerCase();
     const needsSupabase = /\bsupabase\b|database|authentication|auth|user accounts|storage|realtime|chat/.test(lower);
     const needsVercel = /\bvercel\b|deploy|publish|go live/.test(lower);
