@@ -9,7 +9,7 @@ async function query(sql: string) {
   const response = await fetch('https://api.supabase.com/v1/projects/' + encodeURIComponent(ref) + '/database/query', {
     method: 'POST',
     headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({ query }),
+    body: JSON.stringify({ query: String(sql), parameters: [], read_only: false }),
   });
   const text = await response.text();
   let data: any = {};
