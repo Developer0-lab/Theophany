@@ -1,4 +1,4 @@
-export type IntegrationId = 'gmail' | 'instagram' | 'tiktok' | 'facebook' | 'whatsapp' | 'google-drive' | 'google-calendar' | 'notion' | 'github' | 'stripe' | 'canva' | 'supabase' | 'vercel';
+export type IntegrationId = 'gmail' | 'instagram' | 'tiktok' | 'facebook' | 'whatsapp' | 'google-drive' | 'google-calendar' | 'notion' | 'stripe' | 'canva';
 
 export type Integration = { id: IntegrationId; name: string; description: string; category: string; available: boolean; connected?: boolean };
 
@@ -11,9 +11,6 @@ export const integrations: Integration[] = [
  { id:'google-drive', name:'Google Drive', description:'Files, folders, and document workflows', category:'Productivity', available:true },
  { id:'google-calendar', name:'Google Calendar', description:'Events, scheduling, and reminders', category:'Productivity', available:true },
  { id:'notion', name:'Notion', description:'Pages, databases, and knowledge workflows', category:'Productivity', available:true },
- { id:'github', name:'GitHub', description:'Repositories, code, issues, and pull requests', category:'Developer', available:true },
  { id:'stripe', name:'Stripe', description:'Customers, payments, and subscriptions', category:'Business', available:true },
- { id:'canva', name:'Canva', description:'Design workflows and creative assets', category:'Creative', available:true },
- { id:'supabase', name:'Supabase', description:'Database, auth, storage, and backend', category:'Developer', available:true },
- { id:'vercel', name:'Vercel', description:'Deployments, domains, and project management', category:'Developer', available:true }
+ { id:'canva', name:'Canva', description:'Design workflows and creative assets', category:'Creative', available:true }
 ];
