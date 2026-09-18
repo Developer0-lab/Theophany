@@ -14,7 +14,7 @@ async function query(sql: string) {
   const text = await response.text();
   let data: any = {};
   try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
-  if (!response.ok) throw new Error('Supabase query failed (' + response.status + ').');
+  if (!response.ok) throw new Error('Supabase query failed (' + response.status + '): ' + String(data?.message || data?.error || data?.details || text).slice(0, 300));
   return data?.result ?? data?.data ?? data;
 }
 
