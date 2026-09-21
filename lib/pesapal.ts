@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { sqlText, supabaseQuery } from './theophany';
+import { sqlText, supabaseQuery } from './theophany.js';
 const sandbox = process.env.PESAPAL_ENV !== 'live';
 const BASE = sandbox ? 'https://cybqa.pesapal.com/pesapalv3' : 'https://pay.pesapal.com/v3';
 export const PESAPAL_CALLBACK = 'https://theophany.vercel.app/api/integrations/status?action=pesapal-callback';
