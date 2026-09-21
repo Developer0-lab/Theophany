@@ -1,5 +1,5 @@
 import { getMemories, memoryContext, saveMemory } from '../lib/theophany.js';
-import { getIntegrationToken, getIntegrationStatuses } from '../lib/integrations/oauth';
+import { getIntegrationToken, getIntegrationStatuses } from '../lib/integrations/oauth.js';
 
 type FileChange = { path: string; content: string };
 type BuildResult = { summary: string; files: FileChange[]; sql?: string };
