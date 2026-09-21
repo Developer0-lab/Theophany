@@ -2,20 +2,18 @@ import { useEffect, useState } from 'react';
 import { Check, ExternalLink, LoaderCircle, PlugZap } from 'lucide-react';
 import { integrations } from './integrations';
 import './integrations.css';
-
 type Props = { sessionId: string };
 type Status = { provider: string; status: string; scopes?: string[] };
-
 export function IntegrationPanel({ sessionId }: Props) {
   const [statuses, setStatuses] = useState<Status[]>([]);
   const [loading, setLoading] = useState(false);
-  const load = async () => { if (!sessionId) return; setLoading(true); try { const r = await fetch(`/api/integrations/status?session_id=${encodeURIComponent(sessionId)}`); const d = await r.json(); if (d.ok) setStatuses(d.integrations || []); } finally { setLoading(false); } };
+  const load = async () => { if (!sessionId) return; setLoading(true); try { const r = await fetch('/api/integrations/status?session_id=' + encodeURIComponent(sessionId)); const d = await r.json(); if (d.ok) setStatuses(d.integrations || []); } finally { setLoading(false); } };
   useEffect(() => { load(); }, [sessionId]);
   const connected = new Map(statuses.map(s => [s.provider, s]));
   const connect = (id: string) => {
-    if (id === 'gmail') window.location.href = `/api/integrations/gmail/connect?session_id=${encodeURIComponent(sessionId)}`;
-    else if (id === 'google-drive' || id === 'google-calendar') window.location.href = `/api/integrations/google/connect?provider=${encodeURIComponent(id)}&session_id=${encodeURIComponent(sessionId)}`;
-    else window.location.href = `/api/integrations/status?action=connect&provider=${encodeURIComponent(id)}&session_id=${encodeURIComponent(sessionId)}`;
+    if (id === 'gmail') window.location.href = '/api/integrations/gmail/connect?session_id=' + encodeURIComponent(sessionId);
+    else if (id === 'google-drive' || id === 'google-calendar') window.location.href = '/api/integrations/google/connect?provider=' + encodeURIComponent(id) + '&session_id=' + encodeURIComponent(sessionId);
+    else if (id !== 'stripe' && id !== 'pesapal') window.location.href = '/api/integrations/status?action=connect&provider=' + encodeURIComponent(id) + '&session_id=' + encodeURIComponent(sessionId);
   };
   const active = (id: string) => ['gmail','google-drive','google-calendar','instagram','tiktok','facebook','whatsapp','notion','canva'].includes(id);
   return <section className='th-settings-section th-integrations'>
