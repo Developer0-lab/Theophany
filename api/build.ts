@@ -1,4 +1,4 @@
-import { getMemories, memoryContext, saveMemory } from '../lib/theophany';
+import { getMemories, memoryContext, saveMemory } from '../lib/theophany.js';
 import { getIntegrationToken, getIntegrationStatuses } from '../lib/integrations/oauth';
 
 type FileChange = { path: string; content: string };
