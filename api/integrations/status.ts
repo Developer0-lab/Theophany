@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { createPayment, recordTransaction } from '../../lib/pesapal';
+import { createPayment, recordTransaction } from './pesapal';
 export const config={runtime:'nodejs'};
 const q=(v:string)=>"'" + v.replace(/'/g,"''") + "'";
 async function sql(query:string){const t=process.env.SUPABASE_ACCESS_TOKEN,r=process.env.SUPABASE_PROJECT_REF;if(!t||!r)throw new Error('Supabase is not configured.');const x=await fetch('https://api.supabase.com/v1/projects/'+encodeURIComponent(r)+'/database/query',{method:'POST',headers:{Authorization:'Bearer '+t,'Content-Type':'application/json'},body:JSON.stringify({query,parameters:[],read_only:false})});const s=await x.text();if(!x.ok)throw new Error(s.slice(0,300));const d:any=s?JSON.parse(s):{};return d?.result??d?.data??d}
