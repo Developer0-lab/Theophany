@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { sqlText, supabaseQuery } from '../theophany';
+import { sqlText, supabaseQuery } from '../theophany.js';
 
 let tablesReady = false;
 
