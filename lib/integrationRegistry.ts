@@ -45,6 +45,14 @@ async function checkVercel(): Promise<IntegrationCheckResult> {
   return { ok: false, message: 'VERCEL_TOKEN is not configured and this request is not running in Vercel.' };
 }
 
+async function checkDomains(): Promise<IntegrationCheckResult> {
+  const token = process.env.VERCEL_TOKEN;
+  if (!token) return { ok: false, message: 'Vercel token is required for domain management.' };
+  const r = await fetch('https://api.vercel.com/v1/registrar/domains/example.com/availability', { headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' } });
+  if (!r.ok) return { ok: false, message: `Vercel Domains returned HTTP ${r.status}.` };
+  return { ok: true, message: 'Vercel Domains API access confirmed.' };
+}
+
 async function checkPesaPal(): Promise<IntegrationCheckResult> {
   const key = process.env.PESAPAL_CONSUMER_KEY;
   const secret = process.env.PESAPAL_CONSUMER_SECRET;
@@ -71,6 +79,7 @@ export const integrationRegistry: IntegrationDefinition[] = [
   { id: 'supabase', name: 'Supabase', category: 'Database', configured: () => Boolean(process.env.SUPABASE_ACCESS_TOKEN && process.env.SUPABASE_PROJECT_REF), check: checkSupabase },
   { id: 'vercel', name: 'Vercel', category: 'Deployment', configured: () => Boolean(process.env.VERCEL_TOKEN || process.env.VERCEL === '1' || process.env.VERCEL_URL), check: checkVercel },
   { id: 'pesapal', name: 'PesaPal', category: 'Payments', configured: () => Boolean(process.env.PESAPAL_CONSUMER_KEY && process.env.PESAPAL_CONSUMER_SECRET), check: checkPesaPal },
+  { id: 'domains', name: 'Domains', category: 'Business', configured: () => Boolean(process.env.VERCEL_TOKEN), check: checkDomains },
 ];
 
 export function configuredIntegrations() {
