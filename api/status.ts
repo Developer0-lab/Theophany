@@ -5,6 +5,7 @@ export default function handler(req: any, res: any) {
     github: Boolean(process.env.GITHUB_TOKEN),
     supabase: Boolean(process.env.SUPABASE_ACCESS_TOKEN && process.env.SUPABASE_PROJECT_REF),
     vercel: Boolean(process.env.VERCEL || process.env.VERCEL_PROJECT_ID),
+    pesapal: Boolean(process.env.PESAPAL_CONSUMER_KEY && process.env.PESAPAL_CONSUMER_SECRET),
   };
   return res.status(200).json({ ok: true, configured });
 }
