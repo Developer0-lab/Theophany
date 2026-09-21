@@ -108,6 +108,14 @@ function agentTools(providers: Set<string>) {
       { type: 'function', name: 'domain_attach', description: 'Attach an already-owned domain to the configured Theophany Vercel project. Use only when the user has explicitly asked to connect that domain.', parameters: { type: 'object', properties: { domain: { type: 'string' }, project_id: { type: 'string' } }, required: ['domain'], additionalProperties: false } }
     );
   }
+  if (providers.has('facebook') || providers.has('instagram')) {
+    tools.push(
+      { type: 'function', name: 'facebook_list_pages', description: 'List Facebook Pages available to the connected Meta account, including page ids and access tokens. Use this before publishing to identify the requested Page.', parameters: { type: 'object', properties: {}, required: [], additionalProperties: false } },
+      { type: 'function', name: 'facebook_publish_post', description: 'Publish a text post to a Facebook Page. Only use when the user clearly asks Theophany to publish/post it. Never claim publication unless the API succeeds.', parameters: { type: 'object', properties: { page_id: { type: 'string' }, message: { type: 'string' } }, required: ['page_id','message'], additionalProperties: false } },
+      { type: 'function', name: 'instagram_list_accounts', description: 'List Instagram professional accounts connected to the available Facebook Pages. Use this before publishing to identify the requested Instagram account.', parameters: { type: 'object', properties: {}, required: [], additionalProperties: false } },
+      { type: 'function', name: 'instagram_publish_image', description: 'Publish an image to an Instagram professional account. The image_url must be publicly reachable by Meta. Only use when the user clearly asks Theophany to publish it.', parameters: { type: 'object', properties: { instagram_account_id: { type: 'string' }, image_url: { type: 'string' }, caption: { type: 'string' } }, required: ['instagram_account_id','image_url'], additionalProperties: false } }
+    );
+  }
   if (providers.has('google-calendar')) {
     tools.push(
       { type: 'function', name: 'calendar_list_events', description: 'List upcoming events from the connected Google Calendar.', parameters: { type: 'object', properties: { max_results: { type: 'integer', minimum: 1, maximum: 20 }, days: { type: 'integer', minimum: 1, maximum: 30 } }, required: [], additionalProperties: false } },
@@ -138,6 +146,58 @@ async function executeAgentTool(sessionId: string, name: string, args: any): Pro
     const data: any = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(data?.error?.message || data?.message || `Domain attach failed (${r.status}).`);
     return { attached: true, domain, ...data };
+  }
+  if (name === 'facebook_list_pages') {
+    const access = await getIntegrationToken(sessionId, 'facebook', 'access');
+    if (!access) throw new Error('Connect Facebook first.');
+    const r = await fetch('https://graph.facebook.com/v23.0/me/accounts?fields=id,name,access_token,instagram_business_account&access_token=' + encodeURIComponent(access));
+    const data: any = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error?.message || 'Facebook Page lookup failed.');
+    return { pages: (data.data || []).map((p: any) => ({ id: p.id, name: p.name, access_token: p.access_token, instagram_business_account: p.instagram_business_account || null })) };
+  }
+  if (name === 'facebook_publish_post') {
+    const pageId = String(args.page_id || '').trim();
+    const message = String(args.message || '').trim();
+    if (!pageId || !message) throw new Error('page_id and message are required.');
+    const access = await getIntegrationToken(sessionId, 'facebook', 'access');
+    if (!access) throw new Error('Connect Facebook first.');
+    const pagesResponse = await fetch('https://graph.facebook.com/v23.0/me/accounts?fields=id,name,access_token&access_token=' + encodeURIComponent(access));
+    const pages: any = await pagesResponse.json().catch(() => ({}));
+    if (!pagesResponse.ok) throw new Error(pages.error?.message || 'Facebook Page lookup failed.');
+    const page = (pages.data || []).find((p: any) => String(p.id) === pageId);
+    if (!page?.access_token) throw new Error('The requested Facebook Page is not available to the connected account.');
+    const r = await fetch('https://graph.facebook.com/v23.0/' + encodeURIComponent(pageId) + '/feed', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ message, access_token: page.access_token }) });
+    const data: any = await r.json().catch(() => ({}));
+    if (!r.ok || !data.id) throw new Error(data.error?.message || 'Facebook publication failed.');
+    return { published: true, platform: 'facebook', page_id: pageId, page_name: page.name, post_id: data.id };
+  }
+  if (name === 'instagram_list_accounts') {
+    const access = await getIntegrationToken(sessionId, 'instagram', 'access');
+    if (!access) throw new Error('Connect Instagram first.');
+    const r = await fetch('https://graph.facebook.com/v23.0/me/accounts?fields=id,name,access_token,instagram_business_account&access_token=' + encodeURIComponent(access));
+    const data: any = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error?.message || 'Instagram account lookup failed.');
+    return { accounts: (data.data || []).filter((p: any) => p.instagram_business_account?.id).map((p: any) => ({ instagram_account_id: p.instagram_business_account.id, facebook_page_id: p.id, facebook_page_name: p.name, page_access_token: p.access_token })) };
+  }
+  if (name === 'instagram_publish_image') {
+    const accountId = String(args.instagram_account_id || '').trim();
+    const imageUrl = String(args.image_url || '').trim();
+    const caption = String(args.caption || '');
+    if (!accountId || !imageUrl) throw new Error('instagram_account_id and image_url are required.');
+    let access = await getIntegrationToken(sessionId, 'instagram', 'access');
+    if (!access) throw new Error('Connect Instagram first.');
+    const pagesResponse = await fetch('https://graph.facebook.com/v23.0/me/accounts?fields=id,name,access_token,instagram_business_account&access_token=' + encodeURIComponent(access));
+    const pages: any = await pagesResponse.json().catch(() => ({}));
+    if (!pagesResponse.ok) throw new Error(pages.error?.message || 'Instagram Page lookup failed.');
+    const page = (pages.data || []).find((p: any) => String(p.instagram_business_account?.id) === accountId);
+    if (!page?.access_token) throw new Error('The requested Instagram professional account is not available.');
+    const create = await fetch('https://graph.facebook.com/v23.0/' + encodeURIComponent(accountId) + '/media', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ image_url: imageUrl, caption, access_token: page.access_token }) });
+    const container: any = await create.json().catch(() => ({}));
+    if (!create.ok || !container.id) throw new Error(container.error?.message || 'Instagram media container creation failed.');
+    const publish = await fetch('https://graph.facebook.com/v23.0/' + encodeURIComponent(accountId) + '/media_publish', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ creation_id: container.id, access_token: page.access_token }) });
+    const result: any = await publish.json().catch(() => ({}));
+    if (!publish.ok || !result.id) throw new Error(result.error?.message || 'Instagram publication failed.');
+    return { published: true, platform: 'instagram', instagram_account_id: accountId, media_id: result.id };
   }
   if (name === 'gmail_search') {
     const query = encodeURIComponent(String(args.query || ''));
