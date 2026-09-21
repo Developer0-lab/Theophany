@@ -2,8 +2,8 @@ import crypto from 'crypto';
 import { sqlText, supabaseQuery } from './theophany';
 const sandbox = process.env.PESAPAL_ENV !== 'live';
 const BASE = sandbox ? 'https://cybqa.pesapal.com/pesapalv3' : 'https://pay.pesapal.com/v3';
-export const PESAPAL_CALLBACK = 'https://theophany.vercel.app/api/payments/pesapal/create?action=callback';
-export const PESAPAL_IPN = 'https://theophany.vercel.app/api/payments/pesapal/create?action=ipn';
+export const PESAPAL_CALLBACK = 'https://theophany.vercel.app/api/integrations/status?action=pesapal-callback';
+export const PESAPAL_IPN = 'https://theophany.vercel.app/api/integrations/status?action=pesapal-ipn';
 function credentials(){const key=process.env.PESAPAL_CONSUMER_KEY,secret=process.env.PESAPAL_CONSUMER_SECRET;if(!key||!secret)throw new Error('PesaPal credentials are not configured.');return{key,secret};}
 async function token(){const{key,secret}=credentials();const r=await fetch(BASE+'/api/Auth/RequestToken',{method:'POST',headers:{Accept:'application/json','Content-Type':'application/json'},body:JSON.stringify({consumer_key:key,consumer_secret:secret})});const data:any=await r.json().catch(()=>({}));if(!r.ok||!data.token)throw new Error(data.message||data.error?.message||'PesaPal authentication failed.');return data.token as string;}
 async function call(path:string,init:any={}){const bearer=await token();const r=await fetch(BASE+path,{...init,headers:{Accept:'application/json','Content-Type':'application/json',...(init.headers||{}),Authorization:'Bearer '+bearer}});const data:any=await r.json().catch(()=>({}));if(!r.ok)throw new Error(data.message||data.error?.message||'PesaPal API request failed.');return data;}
