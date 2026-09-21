@@ -1,4 +1,4 @@
-import { sqlText, supabaseQuery } from '../lib/theophany';
+import { sqlText, supabaseQuery } from '../lib/theophany.js';
 
 const stepNames = ['Understand', 'Plan', 'Build', 'Test', 'Deploy', 'Complete'];
 async function createJob(sessionId: string, goal: string) {
