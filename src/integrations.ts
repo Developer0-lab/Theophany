@@ -1,7 +1,5 @@
-export type IntegrationId = 'gmail' | 'instagram' | 'tiktok' | 'facebook' | 'whatsapp' | 'google-drive' | 'google-calendar' | 'notion' | 'stripe' | 'canva';
-
+export type IntegrationId = 'gmail' | 'instagram' | 'tiktok' | 'facebook' | 'whatsapp' | 'google-drive' | 'google-calendar' | 'notion' | 'stripe' | 'pesapal' | 'canva';
 export type Integration = { id: IntegrationId; name: string; description: string; category: string; available: boolean; connected?: boolean };
-
 export const integrations: Integration[] = [
  { id:'gmail', name:'Gmail', description:'Email, drafts, and inbox workflows', category:'Communication', available:true },
  { id:'instagram', name:'Instagram', description:'Professional account publishing and insights', category:'Social', available:true },
@@ -11,6 +9,7 @@ export const integrations: Integration[] = [
  { id:'google-drive', name:'Google Drive', description:'Files, folders, and document workflows', category:'Productivity', available:true },
  { id:'google-calendar', name:'Google Calendar', description:'Events, scheduling, and reminders', category:'Productivity', available:true },
  { id:'notion', name:'Notion', description:'Pages, databases, and knowledge workflows', category:'Productivity', available:true },
- { id:'stripe', name:'Stripe', description:'Customers, payments, and subscriptions', category:'Business', available:true },
+ { id:'stripe', name:'Stripe', description:'International payments and subscriptions', category:'Business', available:true },
+ { id:'pesapal', name:'PesaPal', description:'East African payments and customer checkout', category:'Business', available:true },
  { id:'canva', name:'Canva', description:'Design workflows and creative assets', category:'Creative', available:true }
 ];
