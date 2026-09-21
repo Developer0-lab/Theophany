@@ -1,0 +1,100 @@
+import crypto from 'crypto';
+import { sqlText, supabaseQuery } from './theophany';
+
+const sandbox = process.env.PESAPAL_ENV !== 'live';
+const BASE = sandbox ? 'https://cybqa.pesapal.com/pesapalv3' : 'https://pay.pesapal.com/v3';
+export const PESAPAL_CALLBACK = 'https://theophany.vercel.app/api/payments/pesapal/callback';
+export const PESAPAL_IPN = 'https://theophany.vercel.app/api/payments/pesapal/ipn';
+
+function credentials() {
+  const key = process.env.PESAPAL_CONSUMER_KEY;
+  const secret = process.env.PESAPAL_CONSUMER_SECRET;
+  if (!key || !secret) throw new Error('PesaPal credentials are not configured.');
+  return { key, secret };
+}
+
+async function token() {
+  const { key, secret } = credentials();
+  const r = await fetch(BASE + '/api/Auth/RequestToken', {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ consumer_key: key, consumer_secret: secret }),
+  });
+  const data: any = await r.json().catch(() => ({}));
+  if (!r.ok || !data.token) throw new Error(data.message || data.error?.message || 'PesaPal authentication failed.');
+  return data.token as string;
+}
+
+async function call(path: string, init: any = {}) {
+  const bearer = await token();
+  const r = await fetch(BASE + path, {
+    ...init,
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      ...(init.headers || {}),
+      Authorization: 'Bearer ' + bearer,
+    },
+  });
+  const data: any = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.message || data.error?.message || 'PesaPal API request failed.');
+  return data;
+}
+
+async function ensureOrdersTable() {
+  await supabaseQuery("create table if not exists public.theophany_pesapal_orders (id uuid primary key default gen_random_uuid(), session_id text not null, merchant_reference text not null unique, order_tracking_id text, amount numeric(18,2) not null, currency text not null, description text not null, status text not null default 'PENDING', customer jsonb not null default '{}'::jsonb, pesapal_response jsonb not null default '{}'::jsonb, created_at timestamptz not null default now(), updated_at timestamptz not null default now());");
+}
+
+export async function getIpnId() {
+  const list: any[] = await call('/api/URLSetup/GetIpnList');
+  const existing = Array.isArray(list) ? list.find(x => String(x.url || '').replace(/\/$/, '') === PESAPAL_IPN.replace(/\/$/, '') && String(x.ipn_status) === '1') : null;
+  if (existing?.ipn_id) return existing.ipn_id;
+  const created = await call('/api/URLSetup/RegisterIPN', {
+    method: 'POST',
+    body: JSON.stringify({ url: PESAPAL_IPN, ipn_notification_type: 'GET' }),
+  });
+  if (!created.ipn_id) throw new Error(created.message || 'PesaPal did not return an IPN id.');
+  return created.ipn_id;
+}
+
+export async function createPayment(input: { sessionId: string; amount: number; currency: string; description: string; email: string; phone: string; firstName?: string; middleName?: string; lastName?: string; countryCode?: string; }) {
+  await ensureOrdersTable();
+  if (!Number.isFinite(input.amount) || input.amount <= 0) throw new Error('Payment amount must be greater than zero.');
+  if (!input.email || !input.phone) throw new Error('Customer email and phone are required.');
+  const reference = ('TH-' + Date.now().toString(36) + '-' + crypto.randomBytes(4).toString('hex')).slice(0, 50);
+  const ipnId = await getIpnId();
+  const customer = { email: input.email, phone: input.phone, firstName: input.firstName || '', middleName: input.middleName || '', lastName: input.lastName || '', countryCode: input.countryCode || 'UG' };
+  const payload = {
+    id: reference,
+    currency: String(input.currency || 'UGX').toUpperCase(),
+    amount: Number(input.amount),
+    description: String(input.description || 'Theophany payment').slice(0, 100),
+    callback_url: PESAPAL_CALLBACK,
+    cancellation_url: PESAPAL_CALLBACK + '?status=cancelled',
+    redirect_mode: 'TOP_WINDOW',
+    notification_id: ipnId,
+    billing_address: {
+      email_address: customer.email, phone_number: customer.phone, country_code: customer.countryCode,
+      first_name: customer.firstName, middle_name: customer.middleName, last_name: customer.lastName,
+      line_1: '', line_2: '', city: '', state: '', postal_code: '', zip_code: '',
+    },
+  };
+  const result = await call('/api/Transactions/SubmitOrderRequest', { method: 'POST', body: JSON.stringify(payload) });
+  if (!result.redirect_url || !result.order_tracking_id) throw new Error(result.message || 'PesaPal did not create the payment order.');
+  await supabaseQuery("insert into public.theophany_pesapal_orders(session_id,merchant_reference,order_tracking_id,amount,currency,description,status,customer,pesapal_response) values (" + sqlText(input.sessionId) + "," + sqlText(reference) + "," + sqlText(String(result.order_tracking_id)) + "," + Number(input.amount) + "," + sqlText(payload.currency) + "," + sqlText(payload.description) + ",'PENDING'," + sqlText(JSON.stringify(customer)) + "::jsonb," + sqlText(JSON.stringify(result)) + "::jsonb);");
+  return { reference, trackingId: result.order_tracking_id, redirectUrl: result.redirect_url, environment: sandbox ? 'sandbox' : 'live' };
+}
+
+export async function getTransactionStatus(trackingId: string) {
+  return call('/api/Transactions/GetTransactionStatus?orderTrackingId=' + encodeURIComponent(trackingId));
+}
+
+export async function recordTransaction(trackingId: string, merchantReference?: string) {
+  await ensureOrdersTable();
+  const result: any = await getTransactionStatus(trackingId);
+  const status = String(result.payment_status_description || result.payment_status || result.status || 'UNKNOWN').toUpperCase();
+  const safeStatus = status.replace(/[^A-Z0-9_-]/g, '_').slice(0, 40);
+  const where = merchantReference ? 'merchant_reference=' + sqlText(merchantReference) : 'order_tracking_id=' + sqlText(trackingId);
+  await supabaseQuery("update public.theophany_pesapal_orders set status=" + sqlText(safeStatus) + ",pesapal_response=" + sqlText(JSON.stringify(result)) + "::jsonb,updated_at=now() where " + where + ";");
+  return { status: safeStatus, details: result };
+}
