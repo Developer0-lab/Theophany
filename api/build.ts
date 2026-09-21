@@ -116,6 +116,13 @@ function agentTools(providers: Set<string>) {
       { type: 'function', name: 'instagram_publish_image', description: 'Publish an image to an Instagram professional account. The image_url must be publicly reachable by Meta. Only use when the user clearly asks Theophany to publish it.', parameters: { type: 'object', properties: { instagram_account_id: { type: 'string' }, image_url: { type: 'string' }, caption: { type: 'string' } }, required: ['instagram_account_id','image_url'], additionalProperties: false } }
     );
   }
+  if (providers.has('youtube')) {
+    tools.push(
+      { type: 'function', name: 'youtube_get_channel', description: 'Get the connected YouTube channel details. Use this to identify the channel before managing content.', parameters: { type: 'object', properties: {}, required: [], additionalProperties: false } },
+      { type: 'function', name: 'youtube_list_videos', description: 'List recent videos on the connected YouTube channel.', parameters: { type: 'object', properties: { max_results: { type: 'integer', minimum: 1, maximum: 25 } }, required: [], additionalProperties: false } },
+      { type: 'function', name: 'youtube_upload_video', description: 'Upload a video to the connected YouTube channel. Only use when the user clearly asks Theophany to upload/publish it. video_url must be publicly reachable by the Theophany server. The API may keep uploads private until the Google API project is verified.', parameters: { type: 'object', properties: { video_url: { type: 'string' }, title: { type: 'string' }, description: { type: 'string' }, privacy_status: { type: 'string', enum: ['private','unlisted','public'] }, tags: { type: 'array', items: { type: 'string' }, maxItems: 30 }, category_id: { type: 'string' } }, required: ['video_url','title'], additionalProperties: false } }
+    );
+  }
   if (providers.has('google-calendar')) {
     tools.push(
       { type: 'function', name: 'calendar_list_events', description: 'List upcoming events from the connected Google Calendar.', parameters: { type: 'object', properties: { max_results: { type: 'integer', minimum: 1, maximum: 20 }, days: { type: 'integer', minimum: 1, maximum: 30 } }, required: [], additionalProperties: false } },
@@ -198,6 +205,52 @@ async function executeAgentTool(sessionId: string, name: string, args: any): Pro
     const result: any = await publish.json().catch(() => ({}));
     if (!publish.ok || !result.id) throw new Error(result.error?.message || 'Instagram publication failed.');
     return { published: true, platform: 'instagram', instagram_account_id: accountId, media_id: result.id };
+  }
+  if (name === 'youtube_get_channel') {
+    const r = await googleFetch(sessionId, 'youtube', 'https://www.googleapis.com/youtube/v3/channels?part=snippet,contentDetails,statistics&mine=true');
+    if (!r.ok) throw new Error(`YouTube channel lookup failed (${r.status}).`);
+    const data: any = await r.json();
+    const channel = data.items?.[0];
+    if (!channel) throw new Error('No YouTube channel is available for the connected Google account.');
+    return { id: channel.id, title: channel.snippet?.title, description: channel.snippet?.description, thumbnails: channel.snippet?.thumbnails, uploads_playlist_id: channel.contentDetails?.relatedPlaylists?.uploads, statistics: channel.statistics };
+  }
+  if (name === 'youtube_list_videos') {
+    const max = Math.min(Math.max(Number(args.max_results || 10), 1), 25);
+    const channelResponse = await googleFetch(sessionId, 'youtube', 'https://www.googleapis.com/youtube/v3/channels?part=contentDetails&mine=true');
+    if (!channelResponse.ok) throw new Error(`YouTube channel lookup failed (${channelResponse.status}).`);
+    const channelData: any = await channelResponse.json();
+    const uploads = channelData.items?.[0]?.contentDetails?.relatedPlaylists?.uploads;
+    if (!uploads) throw new Error('The connected YouTube channel has no uploads playlist.');
+    const r = await googleFetch(sessionId, 'youtube', 'https://www.googleapis.com/youtube/v3/playlistItems?part=snippet,contentDetails&playlistId=' + encodeURIComponent(uploads) + '&maxResults=' + max);
+    if (!r.ok) throw new Error(`YouTube video list failed (${r.status}).`);
+    const data: any = await r.json();
+    return { videos: (data.items || []).map((x: any) => ({ id: x.contentDetails?.videoId, title: x.snippet?.title, description: x.snippet?.description, published_at: x.snippet?.publishedAt, thumbnail: x.snippet?.thumbnails?.high?.url || x.snippet?.thumbnails?.default?.url })) };
+  }
+  if (name === 'youtube_upload_video') {
+    const videoUrl = String(args.video_url || '').trim();
+    const title = String(args.title || '').trim();
+    if (!videoUrl || !title) throw new Error('video_url and title are required.');
+    const source = await fetch(videoUrl);
+    if (!source.ok || !source.body) throw new Error(`Could not fetch the video source (${source.status}).`);
+    const contentType = source.headers.get('content-type') || 'application/octet-stream';
+    if (!contentType.startsWith('video/') && contentType !== 'application/octet-stream') throw new Error('The video_url did not return a supported video file.');
+    const metadata = {
+      snippet: {
+        title: title.slice(0, 100),
+        description: String(args.description || '').slice(0, 5000),
+        tags: Array.isArray(args.tags) ? args.tags.map((x: any) => String(x)).filter(Boolean).slice(0, 30) : undefined,
+        categoryId: String(args.category_id || '22'),
+      },
+      status: { privacyStatus: ['private','unlisted','public'].includes(String(args.privacy_status || 'private')) ? String(args.privacy_status || 'private') : 'private' }
+    };
+    const init = await googleFetch(sessionId, 'youtube', 'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status', { method: 'POST', headers: { 'Content-Type': 'application/json; charset=UTF-8', 'X-Upload-Content-Type': contentType, ...(source.headers.get('content-length') ? { 'X-Upload-Content-Length': source.headers.get('content-length')! } : {}) }, body: JSON.stringify(metadata) });
+    if (!init.ok) throw new Error(`YouTube upload initialization failed (${init.status}).`);
+    const uploadUrl = init.headers.get('location');
+    if (!uploadUrl) throw new Error('YouTube did not return an upload URL.');
+    const uploadResponse = await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': contentType, ...(source.headers.get('content-length') ? { 'Content-Length': source.headers.get('content-length')! } : {}) }, body: source.body as any, duplex: 'half' } as any);
+    const result: any = await uploadResponse.json().catch(() => ({}));
+    if (!uploadResponse.ok || !result.id) throw new Error(result.error?.message || `YouTube upload failed (${uploadResponse.status}).`);
+    return { uploaded: true, platform: 'youtube', video_id: result.id, url: 'https://www.youtube.com/watch?v=' + result.id, title: result.snippet?.title, privacy_status: result.status?.privacyStatus };
   }
   if (name === 'gmail_search') {
     const query = encodeURIComponent(String(args.query || ''));
