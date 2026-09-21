@@ -1,4 +1,4 @@
-import { integrationRegistry } from '../lib/integrationRegistry';
+import { integrationRegistry } from '../lib/integrationRegistry.js';
 
 type Stage = { id: string; name: string; category?: string; message: string; ok: boolean; configured: boolean };
 const json = (res: any, status: number, body: any) => res.status(status).json(body);
