@@ -52,7 +52,7 @@ async function findVercelDeployment(commitSha: string) {
 
 async function googleFetch(sessionId: string, provider: string, url: string, init: any = {}) {
   let access = (await getIntegrationToken(sessionId, provider, 'access')) || '';
-  if (!access) throw new Error(`Connect ${provider === 'gmail' ? 'Gmail' : provider === 'google-drive' ? 'Google Drive' : 'Google Calendar'} first.`);
+  if (!access) throw new Error(`Connect ${provider === 'gmail' ? 'Gmail' : provider === 'google-drive' ? 'Google Drive' : provider === 'google-calendar' ? 'Google Calendar' : provider === 'youtube' ? 'YouTube' : provider} first.`);
   const call = async (token: string) => fetch(url, {
     ...init,
     headers: { ...(init.headers || {}), Authorization: `Bearer ${token}` },
@@ -341,7 +341,7 @@ async function runServiceAgent(sessionId: string, request: string, memories: any
     body: JSON.stringify({
       model: process.env.THEOPHANY_MODEL || 'gpt-5.4-mini',
       input: [
-        { role: 'system', content: `You are Theophany Agent Mode. You build software AND can operate connected Google services through tools. Use tools when the user asks you to read/search/send Gmail, manage Google Drive files, or read/create Google Calendar events. Do not claim an action happened unless the tool succeeded. Keep responses concise. Shared memory: ${memoryContext(memories)}` },
+        { role: 'system', content: `You are Theophany Agent Mode. You build software AND can operate connected Google services through tools. Use tools when the user asks you to read/search/send Gmail, manage Google Drive files, read/create Google Calendar events, or manage/upload YouTube videos. Do not claim an action happened unless the tool succeeded. Keep responses concise. Shared memory: ${memoryContext(memories)}` },
         { role: 'user', content: request },
       ],
       tools,
@@ -412,7 +412,7 @@ export default async function handler(req: any, res: any) {
       stage(events, 'Memory', 'Shared chat context saved for Agent Mode.', true);
       return res.status(200).json({ ok: true, reply, events, memories_used: memories.length });
     }
-    if (String(req.body?.mode || '').trim() === 'agent') { const serviceIntent = /\\b(gmail|email|emails|inbox|mail|google drive|drive file|drive files|calendar|calendars|meeting|meetings|schedule|scheduled|event|events)\\b/i.test(text); if (serviceIntent) { const serviceReply = await runServiceAgent(sessionId, text, memories, events); if (serviceReply) { await saveMemory(sessionId, `Agent: User requested: ${text}`, 'agent_user', 6).catch(() => {}); await saveMemory(sessionId, `Agent: Theophany replied: ${serviceReply.slice(0, 1200)}`, 'agent_service_result', 7).catch(() => {}); stage(events, 'Complete', 'Connected service work completed.', true); return res.status(200).json({ ok: true, message: serviceReply, events, service_agent: true }); } } }
+    if (String(req.body?.mode || '').trim() === 'agent') { const serviceIntent = /\\b(gmail|email|emails|inbox|mail|google drive|drive file|drive files|calendar|calendars|meeting|meetings|schedule|scheduled|event|events|youtube|youtube channel|youtube video|youtube videos|upload to youtube|publish to youtube)\\b/i.test(text); if (serviceIntent) { const serviceReply = await runServiceAgent(sessionId, text, memories, events); if (serviceReply) { await saveMemory(sessionId, `Agent: User requested: ${text}`, 'agent_user', 6).catch(() => {}); await saveMemory(sessionId, `Agent: Theophany replied: ${serviceReply.slice(0, 1200)}`, 'agent_service_result', 7).catch(() => {}); stage(events, 'Complete', 'Connected service work completed.', true); return res.status(200).json({ ok: true, message: serviceReply, events, service_agent: true }); } } }
     const lower = text.toLowerCase();
     const needsSupabase = /\bsupabase\b|database|authentication|auth|user accounts|storage|realtime|chat/.test(lower);
     const needsVercel = /\bvercel\b|deploy|publish|go live/.test(lower);
