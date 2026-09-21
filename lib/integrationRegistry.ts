@@ -53,7 +53,10 @@ async function checkPesaPal(): Promise<IntegrationCheckResult> {
   const base = sandbox ? 'https://cybqa.pesapal.com/pesapalv3' : 'https://pay.pesapal.com/v3';
   const r = await fetch(base + '/api/Auth/RequestToken', { method: 'POST', headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, body: JSON.stringify({ consumer_key: key, consumer_secret: secret }) });
   const data: any = await r.json().catch(() => ({}));
-  if (!r.ok || !data.token) return { ok: false, message: data.message || data.error?.message || `PesaPal returned HTTP ${r.status}.` };
+  if (!r.ok || !data.token) {
+    const detail = data.error?.message || data.message || data.status || data.error?.code;
+    return { ok: false, message: `PesaPal returned HTTP ${r.status}${detail ? `: ${String(detail).slice(0, 180)}` : ' with no access token in the response.'}` };
+  }
   return { ok: true, message: `PesaPal ${sandbox ? 'sandbox' : 'live'} authentication confirmed.` };
 }
 
