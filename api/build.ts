@@ -102,6 +102,12 @@ function agentTools(providers: Set<string>) {
       { type: 'function', name: 'drive_create_text_file', description: 'Create a plain text file in Google Drive.', parameters: { type: 'object', properties: { name: { type: 'string' }, content: { type: 'string' }, folder_id: { type: 'string' } }, required: ['name', 'content'], additionalProperties: false } }
     );
   }
+  if (providers.has('domains') || process.env.VERCEL_TOKEN) {
+    tools.push(
+      { type: 'function', name: 'domain_search', description: 'Search a domain name for availability and current registration pricing through Vercel Domains.', parameters: { type: 'object', properties: { domain: { type: 'string' } }, required: ['domain'], additionalProperties: false } },
+      { type: 'function', name: 'domain_attach', description: 'Attach an already-owned domain to the configured Theophany Vercel project. Use only when the user has explicitly asked to connect that domain.', parameters: { type: 'object', properties: { domain: { type: 'string' }, project_id: { type: 'string' } }, required: ['domain'], additionalProperties: false } }
+    );
+  }
   if (providers.has('google-calendar')) {
     tools.push(
       { type: 'function', name: 'calendar_list_events', description: 'List upcoming events from the connected Google Calendar.', parameters: { type: 'object', properties: { max_results: { type: 'integer', minimum: 1, maximum: 20 }, days: { type: 'integer', minimum: 1, maximum: 30 } }, required: [], additionalProperties: false } },
@@ -112,6 +118,27 @@ function agentTools(providers: Set<string>) {
 }
 
 async function executeAgentTool(sessionId: string, name: string, args: any): Promise<any> {
+  if (name === 'domain_search') {
+    const domain = String(args.domain || '').trim().toLowerCase();
+    if (!/^[a-z0-9.-]+\\.[a-z]{2,}$/.test(domain)) throw new Error('Please provide a valid domain name.');
+    if (!process.env.VERCEL_TOKEN) throw new Error('Vercel domain access is not configured.');
+    const r = await fetch('https://api.vercel.com/v1/registrar/domains/' + encodeURIComponent(domain) + '/availability', { headers: { Authorization: 'Bearer ' + process.env.VERCEL_TOKEN, Accept: 'application/json' } });
+    const data: any = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data?.error?.message || data?.message || `Domain search failed (${r.status}).`);
+    return { domain, ...data };
+  }
+  if (name === 'domain_attach') {
+    const domain = String(args.domain || '').trim().toLowerCase();
+    const projectId = String(args.project_id || process.env.VERCEL_PROJECT_ID || '').trim();
+    const teamId = String(process.env.VERCEL_TEAM_ID || '').trim();
+    if (!projectId) throw new Error('VERCEL_PROJECT_ID is not configured.');
+    if (!/^[a-z0-9.-]+\\.[a-z]{2,}$/.test(domain)) throw new Error('Please provide a valid domain name.');
+    const query = teamId ? '?teamId=' + encodeURIComponent(teamId) : '';
+    const r = await fetch('https://api.vercel.com/v9/projects/' + encodeURIComponent(projectId) + '/domains' + query, { method: 'POST', headers: { Authorization: 'Bearer ' + process.env.VERCEL_TOKEN, Accept: 'application/json', 'Content-Type': 'application/json' }, body: JSON.stringify({ name: domain }) });
+    const data: any = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data?.error?.message || data?.message || `Domain attach failed (${r.status}).`);
+    return { attached: true, domain, ...data };
+  }
   if (name === 'gmail_search') {
     const query = encodeURIComponent(String(args.query || ''));
     const max = Math.min(Math.max(Number(args.max_results || 5), 1), 10);
