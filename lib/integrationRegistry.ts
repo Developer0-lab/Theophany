@@ -54,8 +54,13 @@ async function checkPesaPal(): Promise<IntegrationCheckResult> {
   const r = await fetch(base + '/api/Auth/RequestToken', { method: 'POST', headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, body: JSON.stringify({ consumer_key: key, consumer_secret: secret }) });
   const data: any = await r.json().catch(() => ({}));
   if (!r.ok || !data.token) {
-    const detail = data.error?.message || data.message || data.status || data.error?.code;
-    return { ok: false, message: `PesaPal returned HTTP ${r.status}${detail ? `: ${String(detail).slice(0, 180)}` : ' with no access token in the response.'}` };
+    const safe = { ...data };
+    delete safe.token;
+    const detail = safe.error?.message || safe.message || safe.status || safe.error?.code;
+    let raw = '';
+    try { raw = JSON.stringify(safe); } catch {}
+    const extra = raw && raw !== '{}' ? ` Response: ${raw.slice(0, 240)}` : '';
+    return { ok: false, message: `PesaPal returned HTTP ${r.status}${detail ? `: ${String(detail).slice(0, 180)}` : ' without an access token.'}${extra}` };
   }
   return { ok: true, message: `PesaPal ${sandbox ? 'sandbox' : 'live'} authentication confirmed.` };
 }
