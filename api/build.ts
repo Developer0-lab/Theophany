@@ -51,7 +51,7 @@ async function findVercelDeployment(commitSha: string) {
 }
 
 async function googleFetch(sessionId: string, provider: string, url: string, init: any = {}) {
-  let access = await getIntegrationToken(sessionId, provider, 'access');
+  let access = (await getIntegrationToken(sessionId, provider, 'access')) || '';
   if (!access) throw new Error(`Connect ${provider === 'gmail' ? 'Gmail' : provider === 'google-drive' ? 'Google Drive' : 'Google Calendar'} first.`);
   const call = async (token: string) => fetch(url, {
     ...init,
