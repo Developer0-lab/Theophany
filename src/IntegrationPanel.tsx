@@ -15,7 +15,7 @@ export function IntegrationPanel({ sessionId }: Props) {
     else if (id === 'google-drive' || id === 'google-calendar') window.location.href = '/api/integrations/google/connect?provider=' + encodeURIComponent(id) + '&session_id=' + encodeURIComponent(sessionId);
     else if (id !== 'stripe' && id !== 'pesapal') window.location.href = '/api/integrations/status?action=connect&provider=' + encodeURIComponent(id) + '&session_id=' + encodeURIComponent(sessionId);
   };
-  const active = (id: string) => ['gmail','google-drive','google-calendar','instagram','tiktok','facebook','whatsapp','notion','canva'].includes(id);
+  const active = (id: string) => ['gmail','google-drive','google-calendar','instagram','tiktok','facebook','whatsapp','notion','canva','youtube'].includes(id);
   return <section className='th-settings-section th-integrations'>
     <div className='th-integrations-title'><div><h4>Plugins & integrations</h4><small>Connect services Theophany can work with. Credentials stay server-side.</small></div>{loading && <LoaderCircle className='th-spin' size={16}/>}</div>
     <div className='th-integration-list'>{integrations.map(item => { const state = connected.get(item.id); const isConnected = state?.status === 'connected'; return <div className='th-integration-row' key={item.id}><span className='th-integration-icon'><PlugZap size={17}/></span><span className='th-integration-info'><b>{item.name}</b><small>{item.description}</small></span>{isConnected ? <span className='th-integration-status'><Check size={14}/> Connected</span> : active(item.id) ? <button className='th-integration-connect' onClick={() => connect(item.id)}><ExternalLink size={14}/> Connect</button> : <span className='th-integration-status muted'>Setup needed</span>}</div>; })}</div>
