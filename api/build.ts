@@ -108,8 +108,10 @@ function agentTools(providers: Set<string>) {
       { type: 'function', name: 'domain_attach', description: 'Attach an already-owned domain to the configured Theophany Vercel project. Use only when the user has explicitly asked to connect that domain.', parameters: { type: 'object', properties: { domain: { type: 'string' }, project_id: { type: 'string' } }, required: ['domain'], additionalProperties: false } }
     );
   }
-  if (providers.has('facebook') || providers.has('instagram')) {
+  if (providers.has('facebook') || providers.has('instagram') || providers.has('whatsapp')) {
     tools.push(
+      { type: 'function', name: 'whatsapp_list_phone_numbers', description: 'List WhatsApp Business phone numbers available to the connected Meta business account. Use this before sending a WhatsApp message.', parameters: { type: 'object', properties: {}, required: [], additionalProperties: false } },
+      { type: 'function', name: 'whatsapp_send_message', description: 'Send a WhatsApp text message through the connected WhatsApp Business account. Only use when the user clearly asks Theophany to send the message. Never claim delivery unless the API succeeds.', parameters: { type: 'object', properties: { phone_number_id: { type: 'string' }, recipient: { type: 'string' }, message: { type: 'string' } }, required: ['phone_number_id','recipient','message'], additionalProperties: false } },
       { type: 'function', name: 'facebook_list_pages', description: 'List Facebook Pages available to the connected Meta account, including page ids and access tokens. Use this before publishing to identify the requested Page.', parameters: { type: 'object', properties: {}, required: [], additionalProperties: false } },
       { type: 'function', name: 'facebook_publish_post', description: 'Publish a text post to a Facebook Page. Only use when the user clearly asks Theophany to publish/post it. Never claim publication unless the API succeeds.', parameters: { type: 'object', properties: { page_id: { type: 'string' }, message: { type: 'string' } }, required: ['page_id','message'], additionalProperties: false } },
       { type: 'function', name: 'instagram_list_accounts', description: 'List Instagram professional accounts connected to the available Facebook Pages. Use this before publishing to identify the requested Instagram account.', parameters: { type: 'object', properties: {}, required: [], additionalProperties: false } },
@@ -153,6 +155,38 @@ async function executeAgentTool(sessionId: string, name: string, args: any): Pro
     const data: any = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(data?.error?.message || data?.message || `Domain attach failed (${r.status}).`);
     return { attached: true, domain, ...data };
+  }
+  if (name === 'whatsapp_list_phone_numbers') {
+    const access = await getIntegrationToken(sessionId, 'whatsapp', 'access');
+    if (!access) throw new Error('Connect WhatsApp first.');
+    const businessesResponse = await fetch('https://graph.facebook.com/v23.0/me/businesses?fields=id,name&access_token=' + encodeURIComponent(access));
+    const businesses: any = await businessesResponse.json().catch(() => ({}));
+    if (!businessesResponse.ok) throw new Error(businesses.error?.message || 'WhatsApp business lookup failed.');
+    const accounts: any[] = [];
+    for (const business of (businesses.data || [])) {
+      const wabaResponse = await fetch('https://graph.facebook.com/v23.0/' + encodeURIComponent(business.id) + '/owned_whatsapp_business_accounts?fields=id,name&access_token=' + encodeURIComponent(access));
+      const wabas: any = await wabaResponse.json().catch(() => ({}));
+      if (!wabaResponse.ok) continue;
+      for (const waba of (wabas.data || [])) {
+        const phonesResponse = await fetch('https://graph.facebook.com/v23.0/' + encodeURIComponent(waba.id) + '/phone_numbers?fields=id,display_phone_number,verified_name&access_token=' + encodeURIComponent(access));
+        const phones: any = await phonesResponse.json().catch(() => ({}));
+        if (!phonesResponse.ok) continue;
+        for (const phone of (phones.data || [])) accounts.push({ business_id: business.id, business_name: business.name, whatsapp_business_account_id: waba.id, whatsapp_business_account_name: waba.name, phone_number_id: phone.id, display_phone_number: phone.display_phone_number, verified_name: phone.verified_name });
+      }
+    }
+    return { phone_numbers: accounts };
+  }
+  if (name === 'whatsapp_send_message') {
+    const phoneNumberId = String(args.phone_number_id || '').trim();
+    const recipient = String(args.recipient || '').trim();
+    const message = String(args.message || '').trim();
+    if (!phoneNumberId || !recipient || !message) throw new Error('phone_number_id, recipient and message are required.');
+    const access = await getIntegrationToken(sessionId, 'whatsapp', 'access');
+    if (!access) throw new Error('Connect WhatsApp first.');
+    const r = await fetch('https://graph.facebook.com/v23.0/' + encodeURIComponent(phoneNumberId) + '/messages', { method: 'POST', headers: { 'Authorization': 'Bearer ' + access, 'Content-Type': 'application/json' }, body: JSON.stringify({ messaging_product: 'whatsapp', to: recipient, type: 'text', text: { body: message } }) });
+    const data: any = await r.json().catch(() => ({}));
+    if (!r.ok || !data.messages?.[0]?.id) throw new Error(data.error?.message || 'WhatsApp message send failed.');
+    return { sent: true, platform: 'whatsapp', phone_number_id: phoneNumberId, recipient, message_id: data.messages[0].id };
   }
   if (name === 'facebook_list_pages') {
     const access = await getIntegrationToken(sessionId, 'facebook', 'access');
