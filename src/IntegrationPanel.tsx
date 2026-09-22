@@ -11,9 +11,11 @@ export function IntegrationPanel({ sessionId }: Props) {
   useEffect(() => { load(); }, [sessionId]);
   const connected = new Map(statuses.map(s => [s.provider, s]));
   const connect = (id: string) => {
-    if (id === 'gmail') window.location.href = '/api/integrations/gmail/connect?session_id=' + encodeURIComponent(sessionId);
-    else if (id === 'google-drive' || id === 'google-calendar') window.location.href = '/api/integrations/google/connect?provider=' + encodeURIComponent(id) + '&session_id=' + encodeURIComponent(sessionId);
-    else if (id !== 'stripe' && id !== 'pesapal') window.location.href = '/api/integrations/status?action=connect&provider=' + encodeURIComponent(id) + '&session_id=' + encodeURIComponent(sessionId);
+    const sid = sessionId || localStorage.getItem('theophany-session-id') || crypto.randomUUID();
+    localStorage.setItem('theophany-session-id', sid);
+    if (id === 'gmail') window.location.href = '/api/integrations/gmail/connect?session_id=' + encodeURIComponent(sid);
+    else if (id === 'google-drive' || id === 'google-calendar') window.location.href = '/api/integrations/google/connect?provider=' + encodeURIComponent(id) + '&session_id=' + encodeURIComponent(sid);
+    else if (id !== 'stripe' && id !== 'pesapal') window.location.href = '/api/integrations/status?action=connect&provider=' + encodeURIComponent(id) + '&session_id=' + encodeURIComponent(sid);
   };
   const active = (id: string) => ['gmail','google-drive','google-calendar','instagram','tiktok','facebook','whatsapp','notion','canva','youtube'].includes(id);
   return <section className='th-settings-section th-integrations'>
