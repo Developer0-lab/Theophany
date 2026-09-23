@@ -382,17 +382,16 @@ async function runServiceAgent(sessionId: string, request: string, memories: any
   const providers = connectedProviderSet(statuses);
   const tools = agentTools(providers);
   if (!tools.length) return null;
-  const { response, data } = await openAIRequest({
-      model: process.env.THEOPHANY_MODEL || 'gpt-5.6-luna',
-      input: [
-        { role: 'system', content: `You are Theophany Agent Mode. You build software AND can operate connected Google services through tools. Use tools when the user asks you to read/search/send Gmail, manage Google Drive files, read/create Google Calendar events, or manage/upload YouTube videos. Do not claim an action happened unless the tool succeeded. Keep responses concise. Shared memory: ${memoryContext(memories)}` },
-        { role: 'user', content: request },
-      ],
-      tools,
-    }),
+  const first = await openAIRequest({
+    model: process.env.THEOPHANY_MODEL || 'gpt-5.6-luna',
+    input: [
+      { role: 'system', content: `You are Theophany Agent Mode. You build software AND can operate connected Google services through tools. Use tools when the user asks you to read/search/send Gmail, manage Google Drive files, read/create Google Calendar events, or manage/upload YouTube videos. Do not claim an action happened unless the tool succeeded. Keep responses concise. Shared memory: ${memoryContext(memories)}` },
+      { role: 'user', content: request },
+    ],
+    tools,
   });
-  if (!response.ok) throw new Error(`OpenAI agent request failed (${response.status}).`);
-  let data: any = await response.json();
+  if (!first.response.ok) throw new Error(`OpenAI agent request failed (${first.response.status}).`);
+  let data: any = first.data;
   let input = data.output || [];
   for (let round = 0; round < 6; round++) {
     const calls = input.filter((x: any) => x?.type === 'function_call');
