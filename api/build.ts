@@ -1,13 +1,26 @@
 import { getMemories, memoryContext, saveMemory } from '../lib/theophany.js';
+import { calculateTextUsageCost, estimateTextCallReservation, releaseAiBudget, reserveAiBudget, settleAiBudget } from '../lib/budget.js';
 import { getIntegrationToken, getIntegrationStatuses } from '../lib/integrations/oauth.js';
 
 type FileChange = { path: string; content: string };
 type BuildResult = { summary: string; files: FileChange[]; sql?: string };
 const stage = (events: any[], name: string, message: string, done = false) => events.push({ stage: name, message, done });
+async function openAIRequest(body: any) {
+  const reservation = await reserveAiBudget(estimateTextCallReservation(JSON.stringify(body)));
+  try {
+    const response = await fetch('https://api.openai.com/v1/responses', { method: 'POST', headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const data: any = await response.json().catch(() => ({}));
+    if (response.ok) await settleAiBudget(reservation, calculateTextUsageCost(data.usage));
+    else await releaseAiBudget(reservation).catch(() => {});
+    return { response, data };
+  } catch (error) {
+    await releaseAiBudget(reservation).catch(() => {});
+    throw error;
+  }
+}
 async function askModel(request: string, needsSupabase: boolean, memories: string): Promise<BuildResult> {
-  const response = await fetch('https://api.openai.com/v1/responses', { method: 'POST', headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: process.env.THEOPHANY_MODEL || 'gpt-5.4-mini', input: [{ role: 'system', content: `You are Theophany, an autonomous software builder. Return ONLY valid JSON with keys summary, files, and optional sql. files is an array of {path,content}. Make a coherent minimal implementation for the user request. Never include secrets. Use the memory below only when relevant; do not invent facts. SESSION MEMORY:\n${memories}\n${needsSupabase ? 'The request requires Supabase. Return sql containing only the necessary PostgreSQL DDL/RLS/storage metadata setup for the requested app. Enable RLS on every exposed public table and use ownership-aware policies. Do not create SECURITY DEFINER functions. Keep SQL idempotent where practical.' : 'Do not return sql.'}` }, { role: 'user', content: request }], text: { format: { type: 'json_object' } } }) });
+  const { response, data } = await openAIRequest({ model: process.env.THEOPHANY_MODEL || 'gpt-5.6-luna', input: [{ role: 'system', content: `You are Theophany, an autonomous software builder. Return ONLY valid JSON with keys summary, files, and optional sql. files is an array of {path,content}. Make a coherent minimal implementation for the user request. Never include secrets. Use the memory below only when relevant; do not invent facts. SESSION MEMORY:\n${memories}\n${needsSupabase ? 'The request requires Supabase. Return sql containing only the necessary PostgreSQL DDL/RLS/storage metadata setup for the requested app. Enable RLS on every exposed public table and use ownership-aware policies. Do not create SECURITY DEFINER functions. Keep SQL idempotent where practical.' : 'Do not return sql.'}` }, { role: 'user', content: request }], text: { format: { type: 'json_object' } } });
   if (!response.ok) throw new Error(`OpenAI request failed (${response.status}).`);
-  const data: any = await response.json();
   const output = data.output_text || data.output?.map((x: any) => x.content?.map((c: any) => c.text || '').join('')).join('');
   if (!output) throw new Error('The AI builder returned no output.');
   return JSON.parse(output);
@@ -369,11 +382,8 @@ async function runServiceAgent(sessionId: string, request: string, memories: any
   const providers = connectedProviderSet(statuses);
   const tools = agentTools(providers);
   if (!tools.length) return null;
-  const response = await fetch('https://api.openai.com/v1/responses', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: process.env.THEOPHANY_MODEL || 'gpt-5.4-mini',
+  const { response, data } = await openAIRequest({
+      model: process.env.THEOPHANY_MODEL || 'gpt-5.6-luna',
       input: [
         { role: 'system', content: `You are Theophany Agent Mode. You build software AND can operate connected Google services through tools. Use tools when the user asks you to read/search/send Gmail, manage Google Drive files, read/create Google Calendar events, or manage/upload YouTube videos. Do not claim an action happened unless the tool succeeded. Keep responses concise. Shared memory: ${memoryContext(memories)}` },
         { role: 'user', content: request },
@@ -403,13 +413,10 @@ async function runServiceAgent(sessionId: string, request: string, memories: any
         stage(events, 'Agent', `${call.name} failed.`);
       }
     }
-    const follow = await fetch('https://api.openai.com/v1/responses', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: process.env.THEOPHANY_MODEL || 'gpt-5.4-mini', previous_response_id: data.id, input: outputs, tools }),
-    });
+    const followResult = await openAIRequest({ model: process.env.THEOPHANY_MODEL || 'gpt-5.6-luna', previous_response_id: data.id, input: outputs, tools });
+    const follow = followResult.response;
     if (!follow.ok) throw new Error(`OpenAI agent continuation failed (${follow.status}).`);
-    data = await follow.json();
+    data = followResult.data;
     input = data.output || [];
   }
   throw new Error('Agent tool loop reached its safety limit.');
@@ -426,19 +433,14 @@ export default async function handler(req: any, res: any) {
     const memories = await getMemories(sessionId, 12).catch(() => []);
     if (memories.length) stage(events, 'Memory', `Loaded ${memories.length} relevant memories.`, true);
     if (String(req.body?.mode || '').trim() === 'chat') {
-      const response = await fetch('https://api.openai.com/v1/responses', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: process.env.THEOPHANY_MODEL || 'gpt-5.4-mini',
+      const { response, data } = await openAIRequest({
+          model: process.env.THEOPHANY_MODEL || 'gpt-5.6-luna',
           input: [
             { role: 'system', content: `You are Theophany in Chat Mode. Have a natural, concise conversation with the user. Discuss general topics, planning, updates, projects, goals, and everyday questions. Do not build or deploy software in Chat Mode; if the user asks to build software, tell them to switch to Agent Mode. Use the shared session memory below when relevant and never invent facts. SHARED SESSION MEMORY:\\n${memoryContext(memories)}` },
             { role: 'user', content: text },
           ],
-        }),
-      });
+        });
       if (!response.ok) throw new Error(`OpenAI request failed (${response.status}).`);
-      const data: any = await response.json();
       const reply = String(data.output_text || data.output?.map((x: any) => x.content?.map((c: any) => c.text || '').join('')).join('') || '').trim();
       if (!reply) throw new Error('The chat service returned no response.');
       await saveMemory(sessionId, `Chat: User said: ${text}`, 'chat_user', 5).catch(() => {});
