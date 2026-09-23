@@ -1,5 +1,32 @@
 import { sqlText, supabaseQuery } from '../lib/theophany.js';
 
+const CRON_SECRET = process.env.CRON_SECRET || '';
+async function ensureAutonomousQueue() {
+  await supabaseQuery("create table if not exists public.theophany_autonomous_goals (id uuid primary key default gen_random_uuid(), session_id text not null, goal text not null, status text not null default 'queued', priority integer not null default 100, attempts integer not null default 0, max_attempts integer not null default 3, automation_job_id uuid, last_error text, created_at timestamptz not null default now(), started_at timestamptz, completed_at timestamptz, updated_at timestamptz not null default now());");
+  await supabaseQuery("create index if not exists theophany_autonomous_goals_queue_idx on public.theophany_autonomous_goals(status, priority, created_at);");
+}
+async function runAutonomousCron(req: any, res: any) {
+  if (CRON_SECRET && String(req.headers?.authorization || '') !== `Bearer ${CRON_SECRET}`) return res.status(401).json({ok:false,message:'Unauthorized'});
+  await ensureAutonomousQueue();
+  const active:any = await supabaseQuery("select count(*)::int as count from public.theophany_autonomous_goals where status='running';");
+  if (Number(Array.isArray(active) ? active[0]?.count : active?.count || 0) > 0) return res.status(200).json({ok:true,action:'idle',message:'An autonomous goal is already running.'});
+  const claimed:any = await supabaseQuery("update public.theophany_autonomous_goals set status='running', attempts=attempts+1, started_at=now(), updated_at=now() where id=(select id from public.theophany_autonomous_goals where status='queued' and attempts < max_attempts order by priority asc, created_at asc limit 1) returning id,session_id,goal,attempts,max_attempts;");
+  const goal=Array.isArray(claimed)?claimed[0]:claimed?.result?.[0];
+  if (!goal) return res.status(200).json({ok:true,action:'idle',message:'No queued autonomous goals.'});
+  const origin=`${req.headers?.['x-forwarded-proto'] || 'https'}://${req.headers?.host || 'theophany.vercel.app'}`;
+  try {
+    const r=await fetch(`${origin}/api/automation`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({goal:goal.goal,session_id:goal.session_id})});
+    const data:any=await r.json().catch(()=>({}));
+    if(!r.ok||!data.ok) throw new Error(data.message||'Autonomous execution failed.');
+    await supabaseQuery(`update public.theophany_autonomous_goals set status='completed', automation_job_id=${sqlText(data.job_id)}, completed_at=now(), updated_at=now(), last_error=null where id=${sqlText(goal.id)};`);
+    return res.status(200).json({ok:true,action:'completed',goal_id:goal.id,job_id:data.job_id});
+  } catch(error:any) {
+    const message=String(error?.message||'Autonomous execution failed.').slice(0,2000);
+    const status=goal.attempts>=goal.max_attempts?'failed':'queued';
+    await supabaseQuery(`update public.theophany_autonomous_goals set status=${sqlText(status)}, last_error=${sqlText(message)}, updated_at=now(), completed_at=${status==='failed'?'now()':'completed_at'} where id=${sqlText(goal.id)};`);
+    return res.status(status==='failed'?500:200).json({ok:status!=='failed',action:status,goal_id:goal.id,message});
+  }
+}
 const stepNames = ['Understand', 'Plan', 'Build', 'Test', 'Deploy', 'Repair', 'Complete'];
 const MAX_ATTEMPTS = 3;
 async function stage(jobId: string, order: number, status: string, message = '') {
@@ -71,6 +98,7 @@ async function runJob(jobId: string, sessionId: string, goal: string, origin: st
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST' && req.method !== 'GET') return res.status(405).json({ ok: false, message: 'Method not allowed' });
   try {
+    if (req.method === 'GET' && String(req.query?.cron || '') === '1') return await runAutonomousCron(req, res);
     if (req.method === 'GET') {
       const sessionId = String(req.query?.session_id || '').trim(); if (!sessionId) return res.status(400).json({ ok: false, message: 'session_id is required.' });
       const jobs: any = await supabaseQuery(`select id,session_id,goal,status,attempts,max_attempts,result,error_message,created_at,started_at,completed_at,updated_at from public.theophany_automation_jobs where session_id=${sqlText(sessionId)} order by created_at desc limit 20;`);
