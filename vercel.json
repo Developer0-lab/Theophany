@@ -1,3 +1,6 @@
 {
-  "crons": [{"path": "/api/autonomous-loop", "schedule": "*/15 * * * *"}]
+  "crons": [{
+    "path": "/api/automation?cron=1",
+    "schedule": "*/15 * * * *"
+  }]
 }
