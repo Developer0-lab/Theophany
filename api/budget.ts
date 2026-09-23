@@ -1,0 +1,3 @@
+import { getBudgetStatus, setMonthlyBudget } from '../lib/budget.js';
+export const config={runtime:'nodejs'};
+export default async function handler(req:any,res:any){try{if(req.method==='GET')return res.status(200).json({ok:true,...await getBudgetStatus()});if(req.method!=='POST')return res.status(405).json({ok:false,message:'Method not allowed'});const value=Number(req.body?.budgetUsd);if(!Number.isFinite(value)||value<1||value>100000)return res.status(400).json({ok:false,message:'Budget must be between $1 and $100,000.'});return res.status(200).json({ok:true,...await setMonthlyBudget(value)});}catch(error:any){return res.status(500).json({ok:false,message:error?.message||'Budget operation failed.'});}}
